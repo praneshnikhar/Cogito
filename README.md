@@ -36,3 +36,5 @@ Cogito/
 3. Build the ingestion pipeline (`src/ingest`), then hybrid search (`src/retrieval`), then the MCP server (`src/mcp`).
 
 See `PROPOSAL.pdf` for the full architecture, data model, pipeline deep-dive, and build roadmap.
+
+
