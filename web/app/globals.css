@@ -1,0 +1,143 @@
+:root {
+  --bg: #0b1020;
+  --panel: #131a2e;
+  --panel-2: #1a2340;
+  --line: #2a3554;
+  --text: #e7ecf7;
+  --muted: #93a0bf;
+  --accent: #4f8cff;
+  --accent-2: #7c5cff;
+  --good: #3ddc97;
+  --warn: #ffb020;
+  --bad: #ff5f6d;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  line-height: 1.55;
+}
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+.wrap {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.nav {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  font-weight: 600;
+}
+.nav .brand {
+  color: var(--text);
+  font-size: 18px;
+  margin-right: auto;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+}
+.grid {
+  display: grid;
+  gap: 16px;
+}
+.stat {
+  font-size: 30px;
+  font-weight: 700;
+  margin: 4px 0 2px;
+}
+.badge {
+  display: inline-block;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.badge.on {
+  color: var(--good);
+  border-color: rgba(61, 220, 151, 0.4);
+}
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn.secondary {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.bread {
+  display: flex;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 4px 0 18px;
+}
+.cite {
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  margin: 8px 0;
+  background: var(--panel-2);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.console {
+  background: #05070f;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+textarea,
+input[type="text"] {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  font: inherit;
+}
+textarea:focus {
+  outline: 2px solid var(--accent);
+}
+.row {
+  display: flex;
+  gap: 10px;
+}
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+klabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}

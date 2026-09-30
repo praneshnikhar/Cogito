@@ -1,0 +1,65 @@
+{
+  "name": "Cogito \u00b7 Ingest via webhook",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "cogito-ingest",
+        "respondMode": "responseNode",
+        "responseData": "allIncomingItems"
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.COGITO_URL || 'http://backend:8000'}}/webhooks/ingest",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Webhook').item.json.text, filename: $('Webhook').item.json.filename, type: 'n8n' }) }}",
+        "options": {
+          "banner": true,
+          "headers": {
+            "headerParameters": [
+              {
+                "name": "X-Admin-Token",
+                "value": "={{$env.COGITO_ADMIN_TOKEN || 'change-me'}}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "http-1",
+      "name": "Post to Cogito",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -120,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Post to Cogito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Cogito": {
+      "main": []
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "Cogito · Unanswered digest (daily)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "days", "daysInterval": 1, "triggerAtHour": 8, "triggerAtMinute": 0 }] }
+      },
+      "id": "cron-1",
+      "name": "Daily 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-420, 220]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.COGITO_URL || 'http://backend:8000'}}/analytics/unanswered",
+        "options": {}
+      },
+      "id": "http-1",
+      "name": "Fetch unanswered",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 220]
+    },
+    {
+      "parameters": {
+        "operation": "aggregate",
+        "jsCode": "const { format } = require('util');\nconst items = $input.all();\nconst count = items.length;\nreturn [{ json: { count, burndown: `Found ${count} unanswered queries. Consider ingesting docs to close the gaps.`, items: items.map(i => i.json.question) } }];"
+      },
+      "id": "code-1",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [60, 220]
+    }
+  ],
+  "connections": {
+    "Daily 08:00": { "main": [[{ "node": "Fetch unanswered", "type": "main", "index": 0 }]] },
+    "Fetch unanswered": { "main": [[{ "node": "Summarize", "type": "main", "index": 0 }]] },
+    "Summarize": { "main": [] }
+  }
+}

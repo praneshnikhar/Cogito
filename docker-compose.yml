@@ -1,0 +1,132 @@
+# ============================================================================
+# Cogito — isolated self-hosted stack
+# ----------------------------------------------------------------------------
+# Core RAG on MongoDB (replica set) with Redis, Postgres (Supabase-style
+# mirror), and n8n automation. Heavy SaaS (PostHog / Sentry) are wired as
+# cloud SDK clients (no-op without keys) to stay light on disk.
+#
+#   docker compose up --build -d           # full core stack
+#   docker compose logs -f backend         # watch ingestion + API logs
+# ============================================================================
+
+services:
+
+  # ---------------- MongoDB: single-node replica set (change streams) --------
+  # Runs without auth on the isolated Docker network (local sandbox) so a
+  # single-node replica set needs no keyfile. Host port 27018 avoids clashing
+  # with any system mongod already on 27017.
+  mongodb:
+    image: mongo:8.0
+    container_name: cogito-mongodb
+    hostname: mongodb
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: [ "CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok" ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  mongodb-init:
+    image: mongo:8.0
+    container_name: cogito-mongodb-init
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongodb/init.js:/init.js:ro
+    entrypoint: ["mongosh", "mongodb://mongodb:27017/admin", "/init.js"]
+
+  # ---------------- Backend API + ingestion worker --------------------------
+  backend:
+    build:
+      context: ./src
+      dockerfile: backend/Dockerfile
+    container_name: cogito-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/cogito?replicaSet=rs0
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_DSN=postgresql+asyncpg://cogito:cogito@postgres:5432/cogito
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    command: [ "sh", "-c", "python app/scripts/ensure_indexes.py && uvicorn app.main:app --host 0.0.0.0 --port 8000" ]
+
+  ingest-worker:
+    build:
+      context: ./src
+      dockerfile: backend/Dockerfile
+    container_name: cogito-ingest-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/cogito?replicaSet=rs0
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_DSN=postgresql+asyncpg://cogito:cogito@postgres:5432/cogito
+    depends_on:
+      mongodb-init:
+        condition: service_completed_successfully
+    command: [ "python", "-m", "app.ingest_worker" ]
+
+  # ---------------- Redis (Upstash-compatible cache + rate limit) ------------
+  redis:
+    image: redis:7-alpine
+    container_name: cogito-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  # ---------------- Postgres (Supabase-style auth + analytics mirror) --------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cogito-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cogito
+      POSTGRES_PASSWORD: cogito
+      POSTGRES_DB: cogito
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U cogito" ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ---------------- n8n automation workflows --------------------------------
+  # Opt-in (heavy image). Enable with:  docker compose --profile automation up -d
+  n8n:
+    profiles: ["automation"]
+    image: n8nio/n8n:latest
+    container_name: cogito-n8n
+    restart: unless-stopped
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=UTC
+      - N8N_METRICS=true
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./infran8n/workflows:/workflows
+
+volumes:
+  mongo_data:
+  pg_data:
+  n8n_data:

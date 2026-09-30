@@ -1,0 +1,34 @@
+{
+  "name": "Cogito · Feedback → re-embed loop",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 2 }] }
+      },
+      "id": "cron-1",
+      "name": "Every 2h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-420, 200]
+    },
+    {
+      "parameters": {
+        "projectName": "Cogito Feedback Loop",
+        "apiEndpoint": "=/api/v1/query",
+        "connectionMode": "openAi",
+        "runType": "regularCall",
+        "prompt": "List all feedback records. Summarize how many are positive vs negative. Return JSON {positive, negative, total}."
+      },
+      "id": "ai-1",
+      "name": "Summarize feedback",
+      "type": "n8n-nodes-base.lmChat",
+      "typeVersion": 1.2,
+      "position": [-180, 200]
+    }
+  ],
+  "connections": {
+    "Every 2h": { "main": [[{ "node": "Summarize feedback", "type": "main", "index": 0 }]] },
+    "Summarize feedback": { "main": [] }
+  }
+}

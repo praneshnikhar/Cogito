@@ -6,3 +6,15 @@ __pycache__/
 node_modules/
 
 .DS_Store
+
+# Web (Next.js)
+web/.env*
+web/.next/
+web/out/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+
+# Backend local overrides
+src/backend/.env
+src/mcp_cogito/__pycache__/
+*.egg-info/

@@ -1,0 +1,131 @@
+"""Document chunking — recursive character splitting with overlap, plus
+lightweight per-type extraction (text / PDF / URL) and content hashing."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import logging
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+log = logging.getLogger("cogito.chunker")
+
+DEFAULT_CHUNK_SIZE = 800
+DEFAULT_OVERLAP = 120
+
+_SEPARATORS = ["\n\n", "\n", ". ", "! ", "? ", "; ", " ", ""]
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def split_by_type(text: str, doc_type: str = "text") -> tuple[list[str], list[int]]:
+    """Returns (texts, pages). Page line-numbers are best-effort."""
+    chunk_size = 500 if doc_type == "contract" else DEFAULT_CHUNK_SIZE
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=DEFAULT_OVERLAP,
+        separators=_SEPARATORS,
+        length_function=len,
+    )
+    texts = splitter.split_text(text)
+    pages = [1] * len(texts)
+    return texts, pages
+
+
+async def extract_text(filename: str, raw: bytes) -> tuple[str, str]:
+    """Return (text, mime_type). Supports .txt, .md, .json, .csv, .pdf,
+    .html, .docx, and images (OCR, when tesseract is installed)."""
+    name = (filename or "").lower()
+    if name.endswith(".pdf"):
+        from pypdf import PdfReader
+
+        try:
+            reader = PdfReader(io.BytesIO(raw))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n\n[PAGE]\n\n".join(pages)
+            return text, "application/pdf"
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"pdf parse failed: {e}")
+            return raw.decode("utf-8", errors="ignore"), "application/pdf"
+    if name.endswith((".csv",)):
+        return raw.decode("utf-8", errors="ignore"), "text/csv"
+    if name.endswith((".json",)):
+        return raw.decode("utf-8", errors="ignore"), "application/json"
+    if name.endswith((".md",)):
+        return raw.decode("utf-8", errors="ignore"), "text/markdown"
+    if name.endswith((".html", ".htm")):
+        from html.parser import HTMLParser
+
+        class _Strip(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.parts: list[str] = []
+
+            def handle_data(self, data):  # noqa: D102
+                if data.strip():
+                    self.parts.append(data.strip())
+
+        p = _Strip()
+        p.feed(raw.decode("utf-8", errors="ignore"))
+        return "\n".join(p.parts), "text/html"
+    if name.endswith(".docx"):
+        try:
+            import zipfile
+            from xml.etree import ElementTree
+
+            with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                xml = z.read("word/document.xml")
+            ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            paras = [
+                "".join(t.text or "" for t in el.iter(f"{ns}t"))
+                for el in ElementTree.fromstring(xml).iter(f"{ns}p")
+            ]
+            return "\n\n".join(p for p in paras if p.strip()), (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"docx parse failed: {e}")
+    if name.endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")):
+        text = _ocr_image(raw)
+        if text:
+            return text, "image/" + name.rsplit(".", 1)[-1]
+        return "", "image/" + name.rsplit(".", 1)[-1]
+    text = raw.decode("utf-8", errors="ignore")
+    return text, "text/plain"
+
+
+def _ocr_image(raw: bytes) -> str:
+    """OCR an image via pytesseract when tesseract is installed; else no-op."""
+    try:
+        from PIL import Image
+
+        import pytesseract
+
+        img = Image.open(io.BytesIO(raw))
+        return pytesseract.image_to_string(img).strip()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            f"image OCR unavailable (install tesseract + pytesseract + pillow): {e}"
+        )
+        return ""
+
+
+def chunks_for_document(
+    filename: str, text: str, doc_type: str
+) -> list[dict]:
+    """Build chunk docs ready to persist (embedding filled in by the caller)."""
+    texts, pages = split_by_type(text, doc_type)
+    chunks = []
+    for i, (t, page) in enumerate(zip(texts, pages)):
+        chunks.append(
+            {
+                "text": t.strip(),
+                "page": page,
+                "order": i,
+                "token_count": len(t.split()),
+            }
+        )
+    return chunks
