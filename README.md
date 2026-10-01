@@ -63,9 +63,9 @@ flowchart TD
 > the real models light up automatically.
 
 > **NoSQL course project?** Two docs explain the project end to end:
-> [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md) — a plain-language report
+> [`docs/PROJECT_REPORT.txt`](docs/PROJECT_REPORT.txt) — a plain-language report
 > on how MongoDB and AI process documents, and
-> [`docs/DATABASE.md`](docs/DATABASE.md) — a feature-by-feature map of every
+> [`docs/DATABASE.txt`](docs/DATABASE.txt) — a feature-by-feature map of every
 > MongoDB and AI feature to its code location.
 
 ## Quick start
@@ -156,8 +156,8 @@ Cogito/
 ├── web/                        — Next.js chat + analytics dashboard (Vercel-ready)
 ├── infran8n/workflows/          — scheduled automation workflows
 ├── docs/PROPOSAL.md             — full project proposal
-├── docs/PROJECT_REPORT.md       — how the NoSQL DB + AI process documents (class report)
-├── docs/DATABASE.md             — MongoDB + AI feature map, feature → code location
+├── docs/PROJECT_REPORT.txt      — how the NoSQL DB + AI process documents (class report)
+├── docs/DATABASE.txt            — MongoDB + AI feature map, feature → code location
 └── .env.example
 ```
 
