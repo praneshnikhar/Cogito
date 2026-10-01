@@ -11,8 +11,13 @@ from fastapi import Header, HTTPException
 from app.config import settings
 
 
-def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
-    token = x_admin_token or ""
+def require_admin(
+    x_admin_token: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> None:
+    token = (x_admin_token or "").strip()
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
     ok = token and hmac.compare_digest(token, settings.admin_token)
     if not ok:
         raise HTTPException(status_code=401, detail="missing or invalid admin token")

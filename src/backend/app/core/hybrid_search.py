@@ -6,6 +6,10 @@ Two modes, same output shape:
   * FALLBACK — mongot absent: `$text` (lexical) + brute-force cosine
             (semantic) merged with Reciprocal Rank Fusion (RRF). Identical
             result contract, runs on any replica set.
+
+Also exposes multi-query retrieval: expand a question into several query
+angles, retrieve for each, and fuse the result lists with RRF — a classic
+retrieval-augmentation technique that lifts recall on hard questions.
 """
 
 from __future__ import annotations
@@ -21,9 +25,11 @@ from app.telemetry import rate_limit
 
 log = logging.getLogger("cogito.retrieval")
 
+RRF_K = 60
 
-async def _lexical_full(question: str, limit: int) -> list[int]:
-    """Document-ids via native $search text."""
+
+async def _lexical_full(question: str, limit: int) -> list[dict]:
+    """Chunks via native $search text."""
     pipeline = [
         {
             "$search": {
@@ -58,49 +64,70 @@ async def _vector_full(query_embedding: list[float], limit: int) -> list[dict]:
 
 
 async def _full_hybrid(question: str, query_embedding: list[float], k: int) -> list[dict]:
-    """Native $rankFusion over search + vector branches."""
+    """Native $rankFusion over search + vector branches.
+
+    Correct MongoDB 8.0 `$rankFusion` shape: `input.pipelines.<name>` maps a
+    name to its selection stages, and the fused RRF score is projected from
+    `$scoreDetails.value`.
+    """
     pipeline = [
         {
             "$rankFusion": {
                 "input": {
-                    "pipeline": [
-                        {"$search": {"index": "cogito_text",
-                                     "text": {"query": question, "path": "text"}}},
-                    ],
-                    "output": "searchRank",
+                    "pipelines": {
+                        "search": [
+                            {"$search": {"index": "cogito_text",
+                                         "text": {"query": question, "path": "text"}}},
+                        ],
+                        "vector": [
+                            {"$vectorSearch": {
+                                "index": "cogito_vector",
+                                "path": "embedding",
+                                "queryVector": query_embedding,
+                                "numCandidates": settings.search_num_candidates,
+                                "limit": max(settings.search_num_candidates, k * 4),
+                            }},
+                        ],
+                    }
                 },
-                "input2": {
-                    "pipeline": [
-                        {"$vectorSearch": {
-                            "index": "cogito_vector",
-                            "path": "embedding",
-                            "queryVector": query_embedding,
-                            "numCandidates": settings.search_num_candidates,
-                            "limit": max(settings.search_num_candidates, k * 4),
-                        }},
-                    ],
-                    "output": "vectorRank",
-                },
+                "scoreDetails": True,
             }
         },
-        {"$set": {"rank": {"$add": ["$searchRank", "$vectorRank"]}}},
-        {"$sort": {"rank": 1}},
         {"$limit": k},
         {"$project": {"_id": 1, "text": 1, "document_id": 1, "title": 1,
-                      "page": 1, "searchRank": 1, "vectorRank": 1, "rank": 1}},
+                      "page": 1, "score": "$scoreDetails.value"}},
     ]
     cur = db.col(db.CHUNKS).aggregate(pipeline)
-    chunks = [doc async for doc in cur]
-    for c in chunks:
-        c["score"] = 1.0 / (1.0 + c.get("rank", 1))
-        c.pop("rank", None)
-    return chunks
+    return [doc async for doc in cur]
 
 
 # ---------------------------------------------------------------- fallback path
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     denom = float(np.linalg.norm(a) * np.linalg.norm(b))
     return 0.0 if denom == 0 else float(np.dot(a, b) / denom)
+
+
+def _rrf_fuse(lists: list[list[dict]], k_const: int = RRF_K) -> list[dict]:
+    """Reciprocal Rank Fusion across any number of ranked lists.
+
+    Returns a single list, ordered by descending fused score, with each doc's
+    `score` set to its RRF value.
+    """
+    scores: dict[str, float] = {}
+    order: dict[str, dict] = {}
+    for lst in lists:
+        for rank, doc in enumerate(lst):
+            key = str(doc["_id"])
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k_const + rank + 1)
+            order.setdefault(key, doc)
+    fused = sorted(scores.items(), key=lambda kv: -kv[1])
+    out = []
+    for key, score in fused:
+        doc = order[key]
+        doc["score"] = score
+        doc.pop("embedding", None)
+        out.append(doc)
+    return out
 
 
 async def _fallback_hybrid(
@@ -133,24 +160,19 @@ async def _fallback_hybrid(
     except Exception as e:  # noqa: BLE001
         log.warning(f"semantic fallback failed: {e}")
 
-    def rrf_lists(lists: list[list[dict]], k_const: int = 60) -> dict[str, float]:
-        scores: dict[str, float] = {}
-        order: dict[str, dict] = {}
-        for lst, mult in zip(lists, [1.0, 1.0]):
-            for rank, doc in enumerate(lst):
-                key = str(doc["_id"])
-                scores[key] = scores.get(key, 0.0) + mult / (k_const + rank + 1)
-                order.setdefault(key, doc)
-        return {k: (scores[k], order[k]) for k in scores}
+    return _rrf_fuse([lexical, semantic])[:k]
 
-    fused = rrf_lists([lexical, semantic])
-    ranked = sorted(fused.items(), key=lambda kv: -kv[1][0])[:k]
-    out = []
-    for key, (score, doc) in ranked:
-        doc["score"] = score
-        doc.pop("embedding", None)
-        out.append(doc)
-    return out
+
+async def _retrieve_raw(
+    question: str, k: int, full: bool | None = None
+) -> list[dict]:
+    """Embed + run lexical/semantic retrieval, returning ranked chunks before
+    feedback boosting or reranking. Shared by single- and multi-query paths."""
+    qv = embeddings.embed_one(question)
+    mode = db.search_mode_sync()
+    if (full if full is not None else mode["full_hybrid"]) and mode["mongot"]:
+        return await _full_hybrid(question, qv, k)
+    return await _fallback_hybrid(question, qv, k)
 
 
 async def hybrid_search(
@@ -161,12 +183,25 @@ async def hybrid_search(
     allowed, _ = await rate_limit(f"rl:search:{question[:16]}", 60, 60)
     if not allowed:
         log.warning("search rate limited")
-    qv = embeddings.embed_one(question)
-    mode = db.search_mode_sync()
-    if (full if full is not None else mode["full_hybrid"]) and mode["mongot"]:
-        chunks = await _full_hybrid(question, qv, k)
-    else:
-        chunks = await _fallback_hybrid(question, qv, k)
+    chunks = await _retrieve_raw(question, k, full)
+    chunks = await _apply_feedback_boosts(chunks)
+    from app.core.reranker import rerank
+
+    return rerank(question, chunks)
+
+
+async def multi_query_search(
+    question: str, k: int | None = None, full: bool | None = None
+) -> list[dict]:
+    """Expand the question into multiple query angles, retrieve for each, and
+    fuse the result lists with RRF. Improves recall for ambiguous/short queries.
+    """
+    k = k or settings.retrieval_top_k
+    from app.core.query_expansion import expand_queries
+
+    variants = await expand_queries(question)
+    per_variant = [await _retrieve_raw(v, k * 3, full) for v in variants]
+    chunks = _rrf_fuse(per_variant)[:k]
     chunks = await _apply_feedback_boosts(chunks)
     from app.core.reranker import rerank
 
@@ -174,14 +209,16 @@ async def hybrid_search(
 
 
 async def _apply_feedback_boosts(chunks: list[dict]) -> list[dict]:
-    """Multiply scores by feedback-derived boost, then re-rank."""
+    """Multiply scores by feedback-derived boost (a multiplier ≈ 1.0), then
+    re-rank. Clamped so a down-voted chunk is suppressed, never negative."""
     try:
         from app.core.feedback import compute_boosts
 
         boosts = await compute_boosts([str(c["_id"]) for c in chunks])
         if boosts:
             for c in chunks:
-                c["score"] = float(c.get("score", 0)) * boosts.get(str(c["_id"]), 1.0)
+                mult = max(0.25, min(4.0, float(boosts.get(str(c["_id"]), 1.0))))
+                c["score"] = float(c.get("score", 0)) * mult
             chunks.sort(key=lambda c: -float(c.get("score", 0)))
     except Exception as e:  # noqa: BLE001
         log.debug(f"feedback boost skipped: {e}")

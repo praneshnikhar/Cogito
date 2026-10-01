@@ -16,13 +16,16 @@ DEFAULT_OVERLAP = 120
 
 _SEPARATORS = ["\n\n", "\n", ". ", "! ", "? ", "; ", " ", ""]
 
+# Marker used by the PDF extractor to delimit page boundaries inside text.
+PAGE_MARKER = "\n\n[PAGE]\n\n"
+
 
 def content_hash(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
 
 def split_by_type(text: str, doc_type: str = "text") -> tuple[list[str], list[int]]:
-    """Returns (texts, pages). Page line-numbers are best-effort."""
+    """Split text into chunks; pages are best-effort line numbers (1-based)."""
     chunk_size = 500 if doc_type == "contract" else DEFAULT_CHUNK_SIZE
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -45,7 +48,7 @@ async def extract_text(filename: str, raw: bytes) -> tuple[str, str]:
         try:
             reader = PdfReader(io.BytesIO(raw))
             pages = [page.extract_text() or "" for page in reader.pages]
-            text = "\n\n[PAGE]\n\n".join(pages)
+            text = PAGE_MARKER.join(pages)
             return text, "application/pdf"
         except Exception as e:  # noqa: BLE001
             log.warning(f"pdf parse failed: {e}")
@@ -113,19 +116,42 @@ def _ocr_image(raw: bytes) -> str:
         return ""
 
 
+def _page_segments(text: str) -> list[tuple[int, str]]:
+    """Split text into (page_number, page_text) using PAGE_MARKER boundaries.
+
+    Non-PDF text has no markers and collapses to a single page-1 segment.
+    """
+    if PAGE_MARKER in text:
+        segments = []
+        for i, seg in enumerate(text.split(PAGE_MARKER)):
+            if seg.strip():
+                segments.append((i + 1, seg))
+        return segments
+    return [(1, text)]
+
+
 def chunks_for_document(
     filename: str, text: str, doc_type: str
 ) -> list[dict]:
-    """Build chunk docs ready to persist (embedding filled in by the caller)."""
-    texts, pages = split_by_type(text, doc_type)
+    """Build chunk docs ready to persist (embedding filled in by the caller).
+
+    Page-aware: PDF pages are preserved as `page` numbers on each chunk so
+    citations can point at the exact source page.
+    """
     chunks = []
-    for i, (t, page) in enumerate(zip(texts, pages)):
-        chunks.append(
-            {
-                "text": t.strip(),
-                "page": page,
-                "order": i,
-                "token_count": len(t.split()),
-            }
-        )
+    order = 0
+    for page, page_text in _page_segments(text):
+        texts, _ = split_by_type(page_text, doc_type)
+        for t in texts:
+            if not t.strip():
+                continue
+            chunks.append(
+                {
+                    "text": t.strip(),
+                    "page": page,
+                    "order": order,
+                    "token_count": len(t.split()),
+                }
+            )
+            order += 1
     return chunks

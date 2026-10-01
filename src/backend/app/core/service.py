@@ -42,8 +42,16 @@ async def ask(
     user_id: str | None = None,
     full: bool | None = None,
 ) -> dict:
-    start = time.time()
     chunks = await hybrid_search(question, k=k, full=full)
+    return await ask_from_chunks(question, chunks, user_id)
+
+
+async def ask_from_chunks(
+    question: str, chunks: list[dict], user_id: str | None = None
+) -> dict:
+    """Generate a grounded, cited answer from pre-retrieved chunks, then log and
+    evaluate it. Shared by the single-pass, agent, and multi-query paths."""
+    start = time.time()
     answer = generate_cited_answer(question, chunks)
     answer["chunks"] = chunks
     answer["query"] = question

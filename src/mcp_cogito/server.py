@@ -18,7 +18,7 @@ import sys
 from mcp.server.fastmcp import FastMCP
 
 from app import db
-from app.core.hybrid_search import hybrid_search
+from app.core.hybrid_search import hybrid_search, multi_query_search
 from app.core.ingestion import create_document, process_document
 from app.core.service import ask
 
@@ -33,11 +33,12 @@ mcp = FastMCP(
 
 @mcp.tool()
 async def list_sources() -> list[dict]:
-    """List every indexed knowledge source."""
+    """List every indexed knowledge source (with AI summary + keywords)."""
     cur = db.col(db.DOCUMENTS).find({"status": "indexed"}, {"raw": 0}).sort("created_at", -1).limit(200)
     return [
         {"document_id": str(d["_id"]), "title": d.get("title"), "type": d.get("type"),
-         "chunks": d.get("chunk_count", 0)} async for d in cur
+         "chunks": d.get("chunk_count", 0), "summary": d.get("summary"),
+         "keywords": d.get("keywords", [])} async for d in cur
     ]
 
 
@@ -45,6 +46,16 @@ async def list_sources() -> list[dict]:
 async def search_knowledge(query: str, k: int = 5) -> list[dict]:
     """Hybrid (keyword + semantic) search over the knowledge base."""
     chunks = await hybrid_search(query, k=k)
+    return [
+        {"text": c.get("text"), "source": c.get("title"), "page": c.get("page"),
+         "score": round(float(c.get("score", 0)), 3)} for c in chunks
+    ]
+
+
+@mcp.tool()
+async def search_multi(query: str, k: int = 5) -> list[dict]:
+    """Multi-query search: expand the query into several angles and fuse results."""
+    chunks = await multi_query_search(query, k=k)
     return [
         {"text": c.get("text"), "source": c.get("title"), "page": c.get("page"),
          "score": round(float(c.get("score", 0)), 3)} for c in chunks

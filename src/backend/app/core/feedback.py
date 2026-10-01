@@ -1,6 +1,9 @@
-"""Feedback loop — thumbs up/down feed back into retrieval ranking. On a
-positive rating we boost the referenced chunks; on a negative rating we
-suppress them. The boost is applied during hybrid retrieval."""
+"""Feedback loop — thumbs up/down feed back into retrieval ranking.
+
+Each chunk carries a `boost` multiplier (default 1.0). A positive rating bumps
+the referenced chunks up (increase multiplier); a negative rating suppresses
+them (decrease multiplier). The multiplier is applied during hybrid retrieval.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +14,11 @@ from uuid import uuid4
 from app import db, telemetry
 
 log = logging.getLogger("cogito.feedback")
+
+BOOST_UP = 0.5
+BOOST_DOWN = -0.25
+BOOST_FLOOR = 0.25
+BOOST_CEIL = 4.0
 
 
 async def record_feedback(
@@ -31,10 +39,19 @@ async def record_feedback(
     # apply boost/suppress to the chunks that produced this answer
     log_row = await db.col(db.QUERY_LOGS).find_one({"answer_id": answer_id})
     chunk_ids = (log_row or {}).get("chunk_ids", [])
-    delta = 1.5 if rating > 0 else (0.5 if rating < 0 else 0.0)
+    delta = BOOST_UP if rating > 0 else (BOOST_DOWN if rating < 0 else 0.0)
     if delta and chunk_ids:
+        # bump the multiplier, then clamp into a safe band
         await db.col(db.CHUNKS).update_many(
             {"_id": {"$in": chunk_ids}}, {"$inc": {"boost": delta}}
+        )
+        await db.col(db.CHUNKS).update_many(
+            {"_id": {"$in": chunk_ids}, "boost": {"$lt": BOOST_FLOOR}},
+            {"$set": {"boost": BOOST_FLOOR}},
+        )
+        await db.col(db.CHUNKS).update_many(
+            {"_id": {"$in": chunk_ids}, "boost": {"$gt": BOOST_CEIL}},
+            {"$set": {"boost": BOOST_CEIL}},
         )
         log.info(f"applied feedback delta {delta} to {len(chunk_ids)} chunks")
     return {"feedback_id": fb_id, "applied": bool(delta and chunk_ids)}
@@ -48,6 +65,6 @@ async def compute_boosts(chunk_ids: list[str]) -> dict[str, float]:
     out = {}
     async for c in cursor:
         b = c.get("boost")
-        if b:
+        if b is not None:
             out[str(c["_id"])] = float(b)
     return out

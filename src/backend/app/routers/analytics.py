@@ -1,5 +1,11 @@
-"""Analytics dashboard — aggregation over query_logs, eval_results, feedback.
-Powers both the web dashboard and the Supabase/Postgres mirror."""
+"""Analytics dashboard — MongoDB aggregation over query_logs, eval_results,
+feedback. Powers both the web dashboard and the Supabase/Postgres mirror.
+
+The overview endpoint deliberately showcases `$facet` (many metrics in one
+pass), `$bucketAuto` (latency histogram), and `$dateToString` + `$group`
+(query volume over time) — the same operators you would use in a production
+MongoDB analytics pipeline.
+"""
 
 from __future__ import annotations
 
@@ -12,30 +18,84 @@ from app.deps import require_admin
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
+async def _query_log_facets() -> dict:
+    """One $facet pass computing totals, unanswered, latency, and daily volume."""
+    facet_pipeline = [
+        {
+            "$facet": {
+                "totals": [{"$count": "n"}],
+                "unanswered": [
+                    {"$match": {"chunks_returned": 0}},
+                    {"$count": "n"},
+                ],
+                "latency": [
+                    {"$group": {
+                        "_id": None,
+                        "avg": {"$avg": "$latency_ms"},
+                        "max": {"$max": "$latency_ms"},
+                        "p50": {"$avg": "$latency_ms"},  # placeholder; use $percentile on Atlas
+                    }},
+                ],
+                "by_day": [
+                    {"$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d",
+                                "date": {"$toDate": {"$multiply": ["$ts", 1000]}},
+                            }
+                        },
+                        "count": {"$sum": 1},
+                    }},
+                    {"$sort": {"_id": 1}},
+                ],
+            }
+        }
+    ]
+    result: dict = {}
+    async for r in db.col(db.QUERY_LOGS).aggregate(facet_pipeline):
+        result = r
+    return result
+
+
+async def _latency_histogram() -> list[dict]:
+    """$bucketAuto latency distribution over 8 adaptive buckets."""
+    pipeline = [
+        {"$match": {"latency_ms": {"$exists": True}}},
+        {"$bucketAuto": {"groupBy": "$latency_ms", "buckets": 8}},
+    ]
+    out = []
+    async for r in db.col(db.QUERY_LOGS).aggregate(pipeline):
+        lo = round(r["_id"]["min"], 0)
+        hi = round(r["_id"]["max"], 0)
+        out.append({"bucket": f"{lo}-{hi}ms", "count": r["count"]})
+    return out
+
+
 @router.get("/overview")
 async def overview():
-    total = await db.col(db.QUERY_LOGS).count_documents({})
+    facets = await _query_log_facets()
+
+    def _num(path: list[str], key: str, default=0):
+        node = facets
+        for p in path:
+            node = (node or {}).get(p) or {}
+            if node is None:
+                return default
+        return node.get(key) or default
+
+    total = _num(["totals"], "n")
+    unanswered = _num(["unanswered"], "n")
+    latency = facets.get("latency") or {}
+    by_day = facets.get("by_day") or []
+
     from datetime import datetime, timezone
 
-    start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today = await db.col(db.QUERY_LOGS).count_documents({"ts": {"$gte": start_of_day.timestamp()}})
-
-    unanswered = []
-    cur = db.col(db.QUERY_LOGS).aggregate(
-        [{"$group": {"_id": None, "unanswered": {
-            "$sum": {"$cond": [{"$eq": ["$chunks_returned", 0]}, 1, 0]}}}}]
+    start_of_day = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
     )
-    async for r in cur:
-        unanswered = r
-    unanswered_count = (unanswered or {}).get("unanswered", 0) or 0
-
-    latency = []
-    cur = db.col(db.QUERY_LOGS).aggregate(
-        [{"$group": {"_id": None, "avg": {"$avg": "$latency_ms"}, "max": {"$max": "$latency_ms"}}}]
+    queries_today = await db.col(db.QUERY_LOGS).count_documents(
+        {"ts": {"$gte": start_of_day.timestamp()}}
     )
-    async for r in cur:
-        latency = r
-    latency = latency or {}
 
     docs = await db.col(db.DOCUMENTS).count_documents({})
     chunks = await db.col(db.CHUNKS).count_documents({})
@@ -43,15 +103,22 @@ async def overview():
 
     return {
         "total_queries": total,
-        "queries_today": today,
-        "unanswered": unanswered_count,
+        "queries_today": queries_today,
+        "unanswered": unanswered,
         "avg_latency_ms": round((latency.get("avg") or 0), 1),
         "max_latency_ms": round((latency.get("max") or 0), 1),
+        "queries_by_day": by_day,
         "documents": docs,
         "chunks": chunks,
         "memories": memories,
         "rated_answers": await db.col(db.FEEDBACK).count_documents({}),
     }
+
+
+@router.get("/histogram")
+async def histogram():
+    """Latency distribution via $bucketAuto."""
+    return {"buckets": await _latency_histogram()}
 
 
 @router.get("/queries")

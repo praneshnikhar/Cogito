@@ -17,7 +17,7 @@ export default function Chat() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<"basic" | "agent">("basic");
+  const [mode, setMode] = useState<"basic" | "agent" | "multi">("basic");
 
   const ask = async (q?: string) => {
     const question = (q ?? input).trim();
@@ -26,7 +26,7 @@ export default function Chat() {
     setMessages((m) => [...m, { role: "user", content: question }]);
     setLoading(true);
     try {
-      const path = mode === "agent" ? "/ask/agent" : "/ask";
+      const path = mode === "agent" ? "/ask/agent" : mode === "multi" ? "/ask/multi" : "/ask";
       const body = mode === "agent" ? { question } : { question, k: 6 };
       const data = await backend(path, { method: "POST", body: JSON.stringify(body) });
       setMessages((m) => [
@@ -69,6 +69,7 @@ export default function Chat() {
         <select value={mode} onChange={(e) => setMode(e.target.value as any)}>
           <option value="basic">single-pass (Tier 1)</option>
           <option value="agent">agent loop (LangGraph)</option>
+          <option value="multi">multi-query (expanded)</option>
         </select>
       </div>
 

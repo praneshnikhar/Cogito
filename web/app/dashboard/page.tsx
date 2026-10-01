@@ -54,6 +54,11 @@ export default function Dashboard() {
     fill: i % 2 ? "#7c5cff" : "#4f8cff",
   }));
 
+  const dayData = ((o?.queries_by_day) ?? []).map((d: any) => ({
+    name: d._id ?? "?",
+    count: d.count,
+  }));
+
   return (
     <main className="wrap">
       <nav className="nav">
@@ -123,6 +128,26 @@ export default function Dashboard() {
             {!data?.freshness?.length && <p className="hint">No documents yet.</p>}
           </div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 18 }}>
+        <h3>Query volume over time ($dateToString + $group)</h3>
+        {dayData.length ? (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={dayData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a3554" />
+              <XAxis dataKey="name" stroke="#93a0bf" tick={{ fontSize: 11 }} />
+              <YAxis stroke="#93a0bf" allowDecimals={false} />
+              <Tooltip
+                cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                contentStyle={{ background: "#131a2e", border: "1px solid #2a3554", borderRadius: 8 }}
+              />
+              <Bar dataKey="count" fill="#4f8cff" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <p className="hint">No query activity yet.</p>
+        )}
       </div>
     </main>
   );

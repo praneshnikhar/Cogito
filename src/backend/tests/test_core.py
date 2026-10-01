@@ -1,11 +1,16 @@
-"""Unit tests for DB-free logic: chunker, embeddings, local LLM, local judge."""
+"""Unit tests for DB-free logic: chunker, embeddings, local LLM, local judge,
+query expansion, and document enrichment."""
+
+import asyncio
 
 import numpy as np
 
 from app.core.embeddings import LocalHashEmbedder, embed, embed_one, fit
 from app.core.llm import LocalTemplateLLM
 from app.core.evaluator import _LocalJudge
-from app.core.chunker import chunks_for_document, content_hash
+from app.core.chunker import PAGE_MARKER, chunks_for_document, content_hash
+from app.core.query_expansion import _deterministic
+from app.core.enrich import enrich, extract_keywords, extractive_summary
 
 
 def test_chunker_overlap():
@@ -79,7 +84,35 @@ def test_extract_html_and_docx():
 
 
 def test_extract_unknown_binary_degrades():
-    import asyncio
     from app.core.chunker import extract_text
     text, _ = asyncio.run(extract_text("scan.png", b"\x89PNG\r\n\x1a\nnotreal"))
     assert isinstance(text, str)
+
+
+def test_chunker_tracks_pdf_pages():
+    text = PAGE_MARKER.join([f"First page paragraph about alpha. " * 6,
+                             f"Second page paragraph about beta. " * 6])
+    chunks = chunks_for_document("doc.pdf", text, "text")
+    pages = {c["page"] for c in chunks}
+    assert pages == {1, 2}
+    assert all("page" in c and "order" in c for c in chunks)
+
+
+def test_query_expansion_deterministic():
+    variants = _deterministic("What is the late delivery penalty in the contract?", 3)
+    assert len(variants) >= 1
+    assert variants[0] == "What is the late delivery penalty in the contract?"
+    # variants must be unique
+    assert len(set(variants)) == len(variants)
+
+
+def test_enrichment_extractive():
+    text = ("The vendor agrees that late delivery accrues a penalty. "
+            "The penalty is capped at fifteen percent of order value. "
+            "Force majeure excuses both parties.")
+    summary = extractive_summary(text, sentences=2)
+    assert isinstance(summary, str) and summary
+    kw = extract_keywords(text)
+    assert isinstance(kw, list) and kw
+    out = enrich(text)
+    assert "summary" in out and "keywords" in out

@@ -37,6 +37,8 @@ flowchart TD
 - **Agentic (LangGraph)** — a retrieve → assess-confidence → refine → answer
   loop with long-term **memory** ("agent memory" pattern stored in Mongo).
 - **Feedback loop** — 👍/👎 ratings feed back into retrieval ranking.
+- **Multi-query retrieval** — query expansion + RRF fusion for higher recall.
+- **Document enrichment** — auto summary + keywords on every ingested document.
 - **MCP server** — `add_document`, `search_knowledge`, `ask_question`,
   `list_sources`, `remember`, `recall` exposed to any MCP client.
 - **Observability & automations** — PostHog (analytics), Sentry (errors),
@@ -59,6 +61,12 @@ flowchart TD
 > **Runs fully offline with zero API keys.** The built-in *local* embedding +
 > LLM keep the whole pipeline demoable; drop your provider keys into `.env` and
 > the real models light up automatically.
+
+> **NoSQL course project?** Two docs explain the project end to end:
+> [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md) — a plain-language report
+> on how MongoDB and AI process documents, and
+> [`docs/DATABASE.md`](docs/DATABASE.md) — a feature-by-feature map of every
+> MongoDB and AI feature to its code location.
 
 ## Quick start
 
@@ -148,6 +156,8 @@ Cogito/
 ├── web/                        — Next.js chat + analytics dashboard (Vercel-ready)
 ├── infran8n/workflows/          — scheduled automation workflows
 ├── docs/PROPOSAL.md             — full project proposal
+├── docs/PROJECT_REPORT.md       — how the NoSQL DB + AI process documents (class report)
+├── docs/DATABASE.md             — MongoDB + AI feature map, feature → code location
 └── .env.example
 ```
 
