@@ -66,9 +66,9 @@ async def _vector_full(query_embedding: list[float], limit: int) -> list[dict]:
 async def _full_hybrid(question: str, query_embedding: list[float], k: int) -> list[dict]:
     """Native $rankFusion over search + vector branches.
 
-    Correct MongoDB 8.0 `$rankFusion` shape: `input.pipelines.<name>` maps a
-    name to its selection stages, and the fused RRF score is projected from
-    `$scoreDetails.value`.
+    MongoDB 8.2 `$rankFusion` shape: `input.pipelines.<name>` maps a name to
+    its selection stages, and the fused RRF score is surfaced with the
+    `$meta: "score"` aggregation expression.
     """
     pipeline = [
         {
@@ -90,12 +90,11 @@ async def _full_hybrid(question: str, query_embedding: list[float], k: int) -> l
                         ],
                     }
                 },
-                "scoreDetails": True,
             }
         },
         {"$limit": k},
         {"$project": {"_id": 1, "text": 1, "document_id": 1, "title": 1,
-                      "page": 1, "score": "$scoreDetails.value"}},
+                      "page": 1, "score": {"$meta": "score"}}},
     ]
     cur = db.col(db.CHUNKS).aggregate(pipeline)
     return [doc async for doc in cur]

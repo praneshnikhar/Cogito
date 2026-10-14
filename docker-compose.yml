@@ -11,15 +11,18 @@
 
 services:
 
-  # ---------------- MongoDB: single-node replica set (change streams) --------
-  # Runs without auth on the isolated Docker network (local sandbox) so a
-  # single-node replica set needs no keyfile. Host port 27018 avoids clashing
-  # with any system mongod already on 27017.
+  # ---------------- MongoDB: single-node replica set + mongot ---------------
+  # mongodb/mongodb-atlas-local bundles mongod 8.2 AND mongot (MongoDB Search)
+  # so the flagship hybrid pipeline ($search + $vectorSearch + $rankFusion)
+  # runs natively — no Atlas account needed. The image boots its own
+  # single-node replica set named after the container hostname, hence
+  # `hostname: rs0` to match the `replicaSet=rs0` connection string.
+  # Runs without auth on the isolated Docker network (local sandbox).
+  # Host port 27018 avoids clashing with any system mongod already on 27017.
   mongodb:
-    image: mongo:8.0
+    image: mongodb/mongodb-atlas-local:8.2
     container_name: cogito-mongodb
-    hostname: mongodb
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    hostname: rs0
     ports:
       - "27018:27017"
     volumes:

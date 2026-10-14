@@ -48,7 +48,7 @@ async def is_replica_set() -> bool:
     try:
         info = await get_client().admin.command({"replSetGetStatus": 1})
         return bool(info.get("ok"))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 

@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from app import db
 from app.core import memory as mem
 from app.core.feedback import record_feedback
+from app.deps import require_admin
 from app.integrations.supabase import record_feedback as sb_feedback
 from app.routers import SessionUuid, user_id
-from app.deps import require_admin
 
 router = APIRouter(tags=["memory"])
 
@@ -41,7 +41,7 @@ async def feedback(body: dict):
     out = await record_feedback(body.get("answer_id", ""), rating, body.get("comment"))
     try:
         await sb_feedback(body.get("answer_id", ""), rating, body.get("comment"))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     return out
 
@@ -49,4 +49,5 @@ async def feedback(body: dict):
 @router.get("/eval")
 async def list_evals(limit: int = 100):
     cur = db.col(db.EVAL_RESULTS).find().sort("ts", -1).limit(limit)
-    return [e async for e in cur]
+    # _id is a Mongo ObjectId here; stringify so FastAPI can serialize it
+    return [{**e, "_id": str(e.get("_id"))} async for e in cur]

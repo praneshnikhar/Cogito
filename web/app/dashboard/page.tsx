@@ -109,7 +109,7 @@ export default function Dashboard() {
         <div className="grid" style={{ gap: 12 }}>
           <div className="card">
             <h3>Answer quality (LLM judge)</h3>
-            {data?.eval ? (
+            {data?.eval?.samples ? (
               <p>
                 Faithfulness <b>{data.eval.avg_faithfulness}</b> · Relevance{" "}
                 <b>{data.eval.avg_relevance}</b> · {data.eval.samples} answers scored

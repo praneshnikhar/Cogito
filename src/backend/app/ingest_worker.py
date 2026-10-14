@@ -45,7 +45,7 @@ async def watch() -> None:
     opts: dict = {"full_document": "updateLookup"}
     if resume_token:
         try:
-            opts["resume_after"] = eval(resume_token)  # noqa: S307 - trusted persisted repr
+            opts["resume_after"] = eval(resume_token)
         except Exception:  # noqa: BLE001
             opts.pop("resume_after", None)
 
@@ -66,7 +66,7 @@ async def watch() -> None:
                             {"_id": doc["_id"]},
                             {"$set": {"status": "failed", "error": str(e)}},
                         )
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001, S110
                         pass
             token = getattr(cs, "resume_token", None)
             if token:
@@ -74,7 +74,7 @@ async def watch() -> None:
 
 
 async def main() -> None:
-    logging.basicConfig(level=getattr(logging, "INFO"))
+    logging.basicConfig(level=logging.INFO)
     log.info("cogito ingest-worker starting")
     await db.ensure_indexes()
     await db.probe_search()

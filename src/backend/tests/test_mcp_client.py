@@ -6,20 +6,26 @@ import os
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 async def main() -> None:
-    # Set in the parent so the spawned server inherits it. Using the venv
-    # python directly avoids `uv` re-exec stripping the environment.
-    os.environ["MONGODB_URI"] = "mongodb://localhost:27018/cogito?replicaSet=rs0"
+    # The SDK's stdio client only inherits a whitelist of env vars, so the
+    # MongoDB URI must be passed explicitly via `env`.
+    env = {
+        **os.environ,
+        "MONGODB_URI": "mongodb://localhost:27018/cogito?replicaSet=rs0&directConnection=true",
+    }
     py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv", "bin", "python")
     params = StdioServerParameters(
         command=py,
         args=[
             "-c",
-            "import sys; sys.path.insert(0,'/Users/pranesh/coding2/Cogito/src/mcp_cogito');"
+            f"import sys; sys.path.insert(0,'{os.path.join(REPO, 'src', 'mcp_cogito')}');"
             "from server import mcp; mcp.run(transport='stdio')",
         ],
-        cwd="/Users/pranesh/coding2/Cogito/src/backend",
+        cwd=os.path.join(REPO, "src", "backend"),
+        env=env,
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

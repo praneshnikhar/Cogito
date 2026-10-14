@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     try:
         from app import telemetry
         await telemetry.redis_client()  # warm connection
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     yield
     log.info("cogito shutting down")

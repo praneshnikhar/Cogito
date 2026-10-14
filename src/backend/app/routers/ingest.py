@@ -19,7 +19,7 @@ class IngestResult(BaseModel):
 
 @router.post("", response_model=IngestResult, dependencies=[Depends(require_admin)])
 async def ingest_file(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008
     doc_type: str = Form("text"),
     source: str = Form("upload"),
 ) -> IngestResult:

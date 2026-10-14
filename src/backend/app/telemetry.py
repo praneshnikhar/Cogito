@@ -10,6 +10,7 @@ from typing import Any
 
 from app.config import settings
 
+
 # ---------------------------------------------------------------- logging
 def _configure_logging() -> None:
     root = logging.getLogger("cogito")
@@ -51,7 +52,7 @@ def capture_exception(exc: BaseException, extras: dict[str, Any] | None = None) 
         sentry_sdk.capture_exception(exc)
         if extras and getattr(sentry_sdk, "set_context", None):
             sentry_sdk.set_context("cogito", extras)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.error("error captured by sentry", exc_info=exc)
 
 
@@ -144,5 +145,5 @@ async def cache_set(key: str, value: str, ttl: int = 300) -> None:
         return
     try:
         await r.set(key, value, ex=ttl)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass

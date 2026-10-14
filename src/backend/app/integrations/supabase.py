@@ -64,7 +64,7 @@ async def record_eval(answer_id: str, result: dict) -> None:
                 }
             ).execute()
             return
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
     try:
         await _pg_exec(
@@ -85,7 +85,7 @@ async def record_feedback(answer_id: str, rating: int, comment: str | None) -> N
                 {"answer_id": answer_id, "rating": rating, "comment": comment}
             ).execute()
             return
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
     try:
         await _pg_exec(
@@ -105,7 +105,7 @@ async def upsert_analytics_daily(day: str, payload: dict) -> None:
                 {"day": day, **payload}
             ).execute()
             return
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
     try:
         await _pg_exec(

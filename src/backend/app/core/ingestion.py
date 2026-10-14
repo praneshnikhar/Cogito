@@ -129,14 +129,13 @@ async def _commit_document(
     """
     client = db.get_client()
     try:
-        async with client.start_session() as session:
-            async with session.start_transaction():
-                await db.col(db.CHUNKS).delete_many({"document_id": doc_id}, session=session)
-                if to_insert:
-                    await db.col(db.CHUNKS).insert_many(to_insert, session=session)
-                await db.col(db.DOCUMENTS).update_one(
-                    {"_id": doc_id}, status_update, session=session
-                )
+        async with await client.start_session() as session, session.start_transaction():
+            await db.col(db.CHUNKS).delete_many({"document_id": doc_id}, session=session)
+            if to_insert:
+                await db.col(db.CHUNKS).insert_many(to_insert, session=session)
+            await db.col(db.DOCUMENTS).update_one(
+                {"_id": doc_id}, status_update, session=session
+            )
         return len(to_insert)
     except Exception as e:  # noqa: BLE001
         log.debug(f"transactional ingest unavailable, falling back ({e})")

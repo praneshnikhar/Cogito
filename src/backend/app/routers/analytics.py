@@ -9,7 +9,6 @@ MongoDB analytics pipeline.
 
 from __future__ import annotations
 
-
 from fastapi import APIRouter, Depends
 
 from app import db
@@ -75,17 +74,21 @@ async def _latency_histogram() -> list[dict]:
 async def overview():
     facets = await _query_log_facets()
 
+    def _first(node):
+        # $facet sub-pipelines always yield arrays of documents
+        if isinstance(node, list):
+            return node[0] if node else {}
+        return node or {}
+
     def _num(path: list[str], key: str, default=0):
         node = facets
         for p in path:
-            node = (node or {}).get(p) or {}
-            if node is None:
-                return default
+            node = _first(node.get(p))
         return node.get(key) or default
 
     total = _num(["totals"], "n")
     unanswered = _num(["unanswered"], "n")
-    latency = facets.get("latency") or {}
+    latency = _first(facets.get("latency"))
     by_day = facets.get("by_day") or []
 
     from datetime import datetime, timezone

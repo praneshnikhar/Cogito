@@ -95,7 +95,7 @@ async def evaluate(
             from app.integrations.supabase import record_eval
 
             await record_eval(answer_id, result)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         return result
     except Exception as e:  # noqa: BLE001

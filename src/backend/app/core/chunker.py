@@ -67,7 +67,7 @@ async def extract_text(filename: str, raw: bytes) -> tuple[str, str]:
                 super().__init__()
                 self.parts: list[str] = []
 
-            def handle_data(self, data):  # noqa: D102
+            def handle_data(self, data):
                 if data.strip():
                     self.parts.append(data.strip())
 
@@ -103,9 +103,8 @@ async def extract_text(filename: str, raw: bytes) -> tuple[str, str]:
 def _ocr_image(raw: bytes) -> str:
     """OCR an image via pytesseract when tesseract is installed; else no-op."""
     try:
-        from PIL import Image
-
         import pytesseract
+        from PIL import Image
 
         img = Image.open(io.BytesIO(raw))
         return pytesseract.image_to_string(img).strip()
