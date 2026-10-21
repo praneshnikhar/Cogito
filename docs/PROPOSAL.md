@@ -1,342 +1,254 @@
 # Cogito
 
-## An MCP-Powered RAG Knowledge Assistant
+## A MongoDB-native document assistant with hybrid search, cited answers, and MCP access
 
-**A self-indexing knowledge base that any AI can query.**
-
-Cogito is a MongoDB-native Retrieval-Augmented Generation (RAG) system with three
-defining traits:
-
-1. **Auto-ingestion** — documents index themselves. Drop a file in, a change stream
-   detects it, chunks it, embeds it, and stores it. No manual indexing.
-2. **Hybrid search** — every query is answered by fusing keyword precision
-   (`$search`) with semantic understanding (`$vectorSearch`), ranked together via
-   `$rankFusion`.
-3. **MCP exposure** — the whole assistant is wrapped as a Model Context Protocol
-   (MCP) server, so Claude Desktop, Cursor, or any MCP client can use your knowledge
-   base as a tool.
-
-The name is deliberate: *Cogito* (Latin, "I think") is a system that does not just
-store knowledge, it reasons over it.
+Prepared August 2026. This document is the plan of record for the project and
+describes the intended scope, design, and milestones.
 
 ---
 
-## 1. The Problem
+## 1. Summary
 
-Knowledge lives in messy places: PDFs, contracts, notes, wikis, chat logs. Three
-things are simultaneously true of almost every organization and student:
+Cogito keeps a small knowledge base of documents and answers questions about
+them. A file that is added to the system indexes itself: the text is split into
+passages, each passage is embedded, and everything is stored in MongoDB. A
+question is answered by retrieving the most relevant passages and generating a
+reply with citations, and the same assistant is exposed to AI clients through
+the Model Context Protocol (MCP).
 
-- **Search is brittle.** Keyword search misses things that are *about* a topic but
-  do not use the exact words. Ask "late delivery penalties" and you miss the
-  paragraph titled "vendor obligations."
-- **Indexing is manual.** Existing RAG systems require a script, a cron job, or a
-  human to re-ingest every time a document changes. Data goes stale silently.
-- **The knowledge is siloed.** A knowledge base is only useful if the tools people
-  already use (their AI assistant, their IDE) can reach it. A standalone chatbot is
-  an island.
-
-Cogito attacks all three at once: semantic retrieval fixes brittle search, change
-streams make indexing automatic, and MCP makes the knowledge reachable from any AI
-client.
+The name comes from the Latin *cogito* ("I think"). The goal behind it is
+modest but concrete: a system that stores knowledge and also reasons over it,
+without pulling in a separate vector store or search engine.
 
 ---
 
-## 2. What Cogito Does (End to End)
+## 2. Problem
 
-A concrete walk-through:
+Working with a folder of documents is harder than it should be, for three
+common reasons.
 
-1. A user drops `acme_vendor_contract_2026.pdf` into a watched folder.
-2. A MongoDB **change stream** fires on the new `documents` entry.
-3. A worker **chunks** the text into overlapping passages, generates **embeddings**
-   for each, and stores chunk + vector + source metadata in MongoDB.
-4. The user asks: *"What are our penalty clauses for late delivery?"*
-5. The query is embedded. A **hybrid search** runs:
-   - `$search` finds chunks containing "penalty" and "late delivery" (keyword).
-   - `$vectorSearch` finds chunks *semantically* about penalties (semantic).
-   - `$rankFusion` merges both result sets into one ranked list.
-6. The top `k` chunks are passed to an LLM, which writes an answer **with citations**
-   to the exact source document and page.
-7. The same answer is available three ways: the web UI, the REST API, and — because
-   Cogito is an MCP server — any MCP-capable AI client.
+1. Keyword search fails on paraphrase. A question about "late delivery
+   penalties" misses a section titled "vendor obligations", even though any
+   reader would say the two are related.
+2. Indexing is manual. Most small RAG setups need a script or a scheduled job
+   to pick up new files, and anything that is not re-run leaves the index
+   silently stale.
+3. The knowledge is trapped in one application. A chat page nobody opens adds
+   little; people already work inside an AI assistant or an editor.
 
----
-
-## 3. Feature Set
-
-Features are organized in three tiers. Tier 1 and Tier 2 are the core. Tier 3 turns
-Cogito from "a good RAG demo" into "a system."
-
-### Tier 1 — Core RAG
-
-- **Auto-ingestion pipeline** — change streams detect new/updated documents and
-  trigger chunking, embedding, and storage with zero manual steps.
-- **Chunking** — recursive text splitting with overlap, tuned per document type.
-- **Embedding** — any embedding model (OpenAI, Gemini, Voyage, or local Ollama)
-  stored as BSON arrays.
-- **Hybrid search** — `$search` (lexical) + `$vectorSearch` (semantic) + `$rankFusion`
-  (fusion), run inside a single MongoDB aggregation pipeline.
-- **Cited answers** — the LLM is required to ground every claim in retrieved chunks
-  and return source references.
-
-### Tier 2 — MCP Integration
-
-- **Outbound (Cogito as an MCP server)** — a custom MCP server exposes Cogito's
-  capabilities as tools:
-  - `add_document(path)` — ingest and index a document.
-  - `search_knowledge(query, k)` — run hybrid search, return ranked chunks.
-  - `ask_question(question)` — return a grounded, cited answer.
-  - `list_sources()` — enumerate what is indexed.
-- **Inbound (MongoDB MCP server)** — the assistant can itself use MongoDB's official
-  MCP server so the agent decides what to query and aggregate rather than calling
-  hard-coded functions. This is the bridge to the agentic tier.
-
-The result: open Claude Desktop or Cursor, ask a question about your documents, and
-the AI calls Cogito's tools to answer. The knowledge base is no longer a separate
-app; it is a capability any AI can invoke.
-
-### Tier 3 — Advanced
-
-1. **Reranking (`$rerank`)** — a second-pass ranker keeps only the most relevant
-   chunks, improving answer quality and cutting LLM token cost.
-2. **Agentic loop (LangGraph)** — the assistant reasons in steps: retrieve, assess
-   confidence, re-query with a refined prompt if weak, optionally run an aggregation
-   (e.g., "how many contracts mention this clause"), then answer.
-3. **Memory** — conversation history plus extracted long-term facts stored with
-   embeddings, recalled via vector search (MongoDB's "agent memory" pattern).
-4. **Evaluation pipeline** — an LLM judge scores each answer for faithfulness
-   (is it grounded?) and relevance (did it answer?); scores are stored and tracked
-   over time.
-5. **Feedback loop** — thumbs-up/down on answers feed back into retrieval ranking.
-6. **Multimodal ingestion** — PDFs with images, tables, and charts are handled with
-   OCR/vision; text and image embeddings live side by side.
-7. **Analytics dashboard** — aggregation over query logs surfaces top questions,
-   unanswered queries (which reveal ingestion gaps), and usage trends.
-8. **Multi-tenant namespaces** — per-user or per-team scoping with read-only modes.
+The project takes one of these at a time: semantic retrieval for paraphrase,
+change streams for indexing, and MCP for reach.
 
 ---
 
-## 4. Architecture
+## 3. Intended behaviour
+
+The plan describes the following user flow.
+
+1. A document is added through the API, a watched folder, or the MCP tool
+   `add_document`.
+2. The insert triggers a change stream event. A worker chunks, embeds, and
+   stores the document without any manual step, and writes a summary and
+   keywords onto the record.
+3. The user asks a question, for example: "What are the penalty clauses for
+   late delivery?"
+4. Retrieval runs two searches at once. One matches words, one matches meaning,
+   and the two rankings are fused into a single list.
+5. A language model writes an answer that cites the passages it used, and a
+   second model call grades the answer for grounding and relevance.
+6. A rating from the user adjusts how the cited passages are ranked in future
+   searches.
+7. The same question can be asked from the web page, the REST API, or an AI
+   client connected over MCP.
+
+---
+
+## 4. Scope
+
+Work is organised in three tiers. Tier 1 and Tier 2 are the required core;
+Tier 3 items are attempted in order and dropped if time runs out.
+
+### Tier 1, core retrieval
+
+- Automatic ingestion through change streams (no cron, no manual re-index).
+- Chunking with overlap, tuned per document type.
+- Pluggable embeddings (OpenAI, Gemini, OpenRouter, Ollama, plus a key-free
+  local embedder so the project runs offline).
+- Hybrid search: `$search` and `$vectorSearch` fused with `$rankFusion` when
+  MongoDB Search is available, and a `$text` + cosine + in-code RRF fallback
+  when it is not.
+- Answers with mandatory citations.
+
+### Tier 2, MCP
+
+- An MCP server exposing the assistant as tools, so any MCP client (Claude
+  Desktop, Cursor, Gemini CLI, Codex) can use the knowledge base.
+
+### Tier 3, advanced
+
+- Reranking: an optional cross-encoder pass over the retrieved candidates,
+  with a lexical fallback when the model is not installed.
+- Agent loop on LangGraph: retrieve, check confidence, refine and re-retrieve
+  when weak, then answer.
+- Long-term memory: facts stored with embeddings and recalled by similarity.
+- Evaluation: an LLM judge scoring faithfulness and relevance for every answer,
+  stored over time.
+- Feedback loop: ratings adjust retrieval ranking.
+- Multimodal ingest: PDFs with images and DOCX/HTML files, with OCR when
+  available.
+- Analytics dashboard computed with aggregation pipelines over the query log.
+
+Deliberately out of budget: real user accounts, multi-tenant isolation, and
+fine-tuning of any model. These are listed under future work in section 12.
+
+---
+
+## 5. Architecture
 
 ```mermaid
 flowchart TD
-    A[Documents: PDF / text / URL] --> B[Watcher]
-    B -->|insert| C[(documents collection)]
-    C -->|change stream| D[Ingestion worker]
-    D --> E[Chunker]
-    E --> F[Embedding model]
-    F --> G[(chunks + vectors)]
-    Q[User / AI client question] --> H[Embed query]
-    H --> I[Hybrid search]
-    I --> J["$search + $vectorSearch + $rankFusion"]
-    J --> K[Top-k chunks]
-    K --> L[LLM answer + citations]
-    L --> M[Response]
-    L --> R[MCP server tools]
-    R --> S[Claude / Cursor / any MCP client]
-    T[Query logs] --> U[Aggregation analytics]
-    U --> V[Dashboard]
+    A[Documents: PDF / text / URL] --> B[documents collection]
+    B -->|change stream| C[Ingestion worker]
+    C --> D[Chunker] --> E[Embeddings] --> F[chunks + vectors]
+    Q[User or AI client question] --> G[Embed query]
+    G --> H[Hybrid search]
+    H --> I["$search + $vectorSearch + $rankFusion, or RRF fallback"]
+    I --> K[Top-k chunks] --> L[LLM answer + citations]
+    L --> M[REST API / web dashboard]
+    L --> N[MCP server tools]
+    T[query_logs] --> U[Aggregation analytics]
+    U --> V[Dashboard charts]
+    L -->|LLM judge| EV[faithfulness + relevance]
+    EV --> FB[Feedback ratings] --> BO[retrieval boosts]
 ```
 
-The flow has two halves joined by MongoDB:
-
-- **Write path (top):** documents flow in and index themselves.
-- **Read path (bottom):** questions flow in and come back as grounded answers.
-
-Everything — documents, chunks, vectors, memory, logs, evaluations — lives in one
-MongoDB deployment. No separate vector database, no separate search engine, no sync
-tax.
+Everything lives in one MongoDB deployment: documents, chunk vectors,
+conversations, memory, logs, evaluation scores, and ratings. The write path
+(ingestion) and the read path (questions) meet only in the database.
 
 ---
 
-## 5. Data Model
-
-All data is stored in MongoDB. Vector search and full-text search run natively.
+## 6. Data model
 
 | Collection | Purpose | Key fields |
 |---|---|---|
-| `documents` | source docs + metadata | `_id`, `path`, `title`, `type`, `hash`, `status`, `ingested_at` |
-| `chunks` | text passages | `_id`, `document_id`, `text`, `embedding` (vector), `page`, `token_count` |
-| `conversations` | chat history | `_id`, `user_id`, `messages[]`, `created_at` |
-| `memories` | long-term facts | `_id`, `user_id`, `fact`, `embedding`, `importance`, `updated_at` |
-| `query_logs` | every query | `_id`, `question`, `chunks_returned`, `latency_ms`, `answer_id`, `ts` |
-| `eval_results` | answer scoring | `_id`, `answer_id`, `faithfulness`, `relevance`, `judge`, `ts` |
+| `documents` | source files and metadata | `_id`, `path`, `title`, `type`, `hash`, `status`, `summary`, `keywords` |
+| `chunks` | passages and vectors | `_id`, `document_id`, `text`, `embedding`, `page`, `order`, `token_count`, `boost` |
+| `conversations` | chat history | `_id`, `user_id`, `messages[]` |
+| `memories` | long-term facts | `_id`, `user_id`, `fact`, `embedding`, `importance` |
+| `query_logs` | one record per question | `_id`, `question`, `chunks_returned`, `chunk_ids[]`, `latency_ms`, `answer_id`, `ts` |
+| `eval_results` | judge scores | `_id`, `answer_id`, `faithfulness`, `relevance`, `judge`, `ts` |
 | `feedback` | user ratings | `_id`, `answer_id`, `rating`, `comment`, `ts` |
 
-### Indexes
-
-- **Vector index** on `chunks.embedding` (e.g., HNSW) for `$vectorSearch`.
-- **Atlas Search / Lucene index** on `chunks.text` for `$search`.
-- **Compound indexes** for common filters: `chunks(document_id)`,
-  `query_logs(ts)`, `documents(status)`.
+Indexes planned for the first milestone: a text index on `chunks.text`, an HNSW
+vector index on `chunks.embedding`, lookups on `documents.status` and
+`chunks.document_id`, and compound indexes for duplicate detection
+(`documents.path` + `hash`) and per-user memory reads.
 
 ---
 
-## 6. Hybrid Search Pipeline (deep dive)
+## 7. Retrieval design
 
-The retrieval is a single aggregation. In pseudocode:
+A retrieval call runs one aggregation with two entry points. The lexical branch
+uses `$search` over a text index, and the semantic branch uses `$vectorSearch`
+over the vector index. `$rankFusion` executes both and merges them with
+Reciprocal Rank Fusion, returning a single ranked set with a score per document.
 
-```
-search_term = embed(question)
+The fallback path exists because MongoDB Search is not available in every
+deployment. In that mode the lexical branch uses a `$text` index and the
+semantic branch computes cosine similarity in Python. The fusion step is
+implemented directly (the same `1/(60 + rank)` formula) so both paths return
+identical result fields. A startup probe decides which path is active, and the
+two are interchangeable from the rest of the code's point of view.
 
-pipeline = [
-  { $search: { index: "text", text: { query: question, path: "text" } } },
-  { $limit: 50 },
-  {
-    $vectorSearch: {
-      index: "vector",
-      path: "embedding",
-      queryVector: search_term,
-      numCandidates: 100,
-      limit: 50
-    }
-  },
-  {
-    $rankFusion: {
-      input: [ { $search: {...} }, { $vectorSearch: {...} } ]
-    }
-  },
-  { $limit: k },
-  { $project: { text: 1, document_id: 1, page: 1, score: 1 } }
-]
-```
-
-Why this beats either approach alone:
-
-- A user searching "winter wedding outfit" would miss a product described as
-  "formal cold-weather gown" with pure keyword search.
-- A user searching for an exact clause number "4.2" would be misled by pure
-  semantic search, which does not do exact matching well.
-- `$rankFusion` combines both signal types, so exact matches and semantic matches
-  both surface in the right order.
+The over-request ratio (100 vector candidates for 5 returned results) follows
+the guidance in the `$vectorSearch` documentation.
 
 ---
 
-## 7. MCP Integration (detail)
+## 8. MCP surface
 
-### Cogito as an MCP server
+The server exposes seven tools:
 
-Cogito ships a small MCP server (built on the MCP TypeScript or Python SDK) that
-exposes four tools:
-
-```
-tool: add_document
-  params: { path: string }
-  returns: { document_id, chunks_created, status }
-
-tool: search_knowledge
-  params: { query: string, k?: int }
-  returns: [ { text, source, page, score } ]
-
-tool: ask_question
-  params: { question: string }
-  returns: { answer, citations: [ { source, page, excerpt } ] }
-
-tool: list_sources
-  params: {}
-  returns: [ { document_id, title, chunks } ]
-```
-
-Any MCP client (Claude Desktop, Cursor, Gemini CLI, Codex) can register Cogito and
-immediately gain access to the knowledge base. This is the "wow" moment of the
-project: the user's existing AI assistant suddenly knows their documents.
-
-### Using MongoDB's official MCP server
-
-MongoDB ships `mongodb-mcp-server`, which exposes tools like `find`, `aggregate`,
-`insert-many`, `update-many`, and `collection-schema`. In the agentic tier, Cogito's
-agent calls these tools directly, so the LLM decides — at runtime — whether to run a
-hybrid search, a `$graphLookup`, or an aggregation, rather than following fixed code
-paths.
-
----
-
-## 8. Tech Stack
-
-| Layer | Choice | Notes |
+| Tool | Input | Output |
 |---|---|---|
-| Database | MongoDB Community Edition 8.2+ | free, unlimited, ships `$search` + `$vectorSearch` + `$rankFusion` |
-| Backend | Python + FastAPI | matches existing repo, async-friendly |
-| Ingestion | change streams + worker | `watch()` on `documents` |
-| Chunking | LangChain text splitters | recursive + overlap |
-| Embeddings | OpenAI / Gemini / Ollama | pluggable |
-| LLM | OpenAI / Gemini / Ollama | pluggable |
-| Agent framework | LangGraph | for the agentic tier |
-| MCP server | MCP Python/TS SDK | outbound tools |
-| Frontend (optional) | React / Streamlit | simple chat + sources UI |
-| Dashboards | Atlas Charts / custom aggregation UI | analytics |
+| `list_sources` | none | indexed documents with summary and keywords |
+| `search_knowledge` | query, k | ranked passages |
+| `search_multi` | query, k | ranked passages from expanded queries |
+| `ask_question` | question | answer with citations and scores |
+| `add_document` | path | indexing result |
+| `remember` | fact | stored memory id |
+| `recall` | query, limit | relevant memories |
+
+The server runs over stdio, so a client registers it with a short JSON
+configuration block and gains the tools without any change to the client.
 
 ---
 
-## 9. Free-Tier Strategy
+## 9. Technology choices
 
-The project is designed to run entirely free. Two deployment options:
-
-| | Community Edition 8.2+ (self-hosted) | Atlas M0 (managed) |
+| Layer | Choice | Reason |
 |---|---|---|
-| Cost | $0 | $0 |
-| Vector + hybrid search | Full (`$vectorSearch`, `$search`, `$rankFusion`) | Limited (`$search` needs M10+) |
-| Storage / throughput | Unlimited | 512 MB, 100 ops/sec |
-| Setup | Run `mongod` + `mongot` (Docker) | Sign up, click deploy |
-| Best for | The full feature set, demos | Quick prototypes |
-
-**Recommendation:** self-host Community Edition 8.2+ so the flagship hybrid-search
-features work without limits. It runs in a single Docker container and is the same
-binary family you would use in production.
+| Database | MongoDB 8.2 with MongoDB Search, via the `mongodb-atlas-local` Docker image | one process provides the database, the search engine, and change streams |
+| Backend | Python, FastAPI, Motor (async driver) | async I/O matches the change-stream worker and the API |
+| Chunking | LangChain recursive text splitter | standard, well-tested splitter with overlap support |
+| Embeddings and LLM | OpenAI, Gemini, OpenRouter, Ollama, and a built-in local mode | the project must run with zero keys and upgrade with a key |
+| Agent loop | LangGraph | small state graphs without a large framework |
+| MCP | MCP Python SDK | the reference SDK for stdio servers |
+| Web | Next.js with Recharts | two small pages (chat, dashboard), easy deployment |
+| Supporting services | Redis, Postgres, n8n (optional), PostHog and Sentry SDKs (no-op without keys) | caching, analytics mirror, and scheduled automations |
 
 ---
 
-## 10. Build Roadmap
+## 10. Cost
 
-| Milestone | Deliverable | Est. effort |
+The project is designed to run at zero cost.
+
+- Self-hosted: the Docker image bundles the database and the search engine on
+  one machine, so the full feature set works without an account.
+- Managed alternative: a free Atlas tier works for storage and vector search,
+  while `$search` requires a paid tier. The fallback path covers this case.
+- Model providers: the local embedder and template answer generator need no
+  key; any paid provider is swapped in through environment variables.
+
+---
+
+## 11. Milestones
+
+| Milestone | Deliverable | Estimated effort |
 |---|---|---|
-| M1 | MongoDB 8.2+ running (Docker) + driver connected | 0.5 day |
-| M2 | Ingestion: change stream -> chunk -> embed -> store + vector/text indexes | 2 days |
-| M3 | Hybrid search + cited answers (Tier 1 done) | 2 days |
-| M4 | MCP server wrapping the assistant, tested in Claude Desktop/Cursor (Tier 2 done) | 2 days |
-| M5 | Agentic loop + memory (LangGraph) | 2 days |
-| M6 | Evaluation pipeline + feedback loop | 1.5 days |
-| M7 | Analytics dashboard over query logs | 1.5 days |
-| M8 | Multimodal ingestion + reranking + polish | 2 days |
+| M1 | MongoDB 8.2 replica set running; driver connected | 0.5 day |
+| M2 | Change-stream ingestion: chunk, embed, store, index | 2 days |
+| M3 | Hybrid retrieval and cited answers (Tier 1) | 2 days |
+| M4 | MCP server tested against a real client (Tier 2) | 2 days |
+| M5 | Agent loop and memory | 2 days |
+| M6 | Evaluation and feedback loop | 1.5 days |
+| M7 | Analytics dashboard | 1.5 days |
+| M8 | Reranking, multimodal ingest, polish | 2 days |
 
-**Total: roughly two focused weeks**, front-loaded so the core (M1-M4) is demoable
-after the first week.
+Success criteria for the finished project:
 
----
-
-## 11. Evaluation & Success Metrics
-
-- **Retrieval quality** — recall@k on a small labeled query set; did the relevant
-  chunk surface in the top `k`?
-- **Answer faithfulness** — LLM-judge score: is every claim supported by a retrieved
-  chunk? (hallucination guard).
-- **Answer relevance** — LLM-judge score: does the answer actually address the query?
-- **Freshness** — latency between dropping a document and it being queryable
-  (should be seconds, thanks to change streams).
-- **Usage** — query volume and unanswered-query rate from the analytics dashboard.
+- A document is queryable a few seconds after insertion, with no manual step.
+- A question returns an answer in which every claim cites a passage.
+- Both retrieval paths (native fusion and fallback) produce results in the
+  same format.
+- The dashboard reports latency, unanswered questions, and judge scores from
+  live data.
+- An MCP client can call the tools and receive a cited answer.
 
 ---
 
-## 12. Risks & Mitigations
+## 12. Risks, and future work
 
 | Risk | Mitigation |
 |---|---|
-| Chunking quality hurts retrieval | Tune chunk size/overlap per document type; test with recall@k |
-| LLM hallucination | Citations required; faithfulness eval scores every answer |
-| Embedding/LLM API cost | Pluggable provider; Ollama for fully local, free |
-| Free-tier limits (if Atlas M0) | Prefer self-hosted Community Edition |
-| Change-stream worker restarts lose events | Resume tokens persisted so ingestion is durable |
+| Retrieval quality | tune chunk size and overlap; keep reranking optional |
+| Model hallucination | the citation requirement plus faithfulness scoring on every answer |
+| Provider cost or outage | pluggable providers and a fully offline mode |
+| Search engine missing in some deployments | startup probe and an equivalent fallback path |
+| Worker restarts | resume tokens plus a pending-document backfill on startup |
 
----
-
-## 13. Why This Project Stands Out
-
-- It uses MongoDB's **flagship AI features** (`$vectorSearch`, `$search`,
-  `$rankFusion`, `$rerank`) end to end — not just CRUD.
-- It is **event-driven** (change streams) rather than batch, which is genuinely
-  harder and more impressive.
-- It is **MCP-native**, the hottest integration in 2026 — the knowledge base becomes
-  a tool for any AI, not a separate app.
-- It is **free to build and run** on Community Edition, with a real architecture that
-  maps to production (RAG + agents + memory + evaluation).
-
-*Cogito, ergo sum.* — the system that reasons over what it knows.
+Ideas that did not make the first scope: real user accounts and multi-tenant
+scoping, an inbound connection to MongoDB's official MCP server so the agent
+can compose its own aggregations, and larger multimodal coverage. These are
+candidates for a second iteration, not promises.

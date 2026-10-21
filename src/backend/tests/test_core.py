@@ -5,12 +5,12 @@ import asyncio
 
 import numpy as np
 
-from app.core.embeddings import LocalHashEmbedder, embed, embed_one, fit
-from app.core.llm import LocalTemplateLLM
-from app.core.evaluator import _LocalJudge
 from app.core.chunker import PAGE_MARKER, chunks_for_document, content_hash
-from app.core.query_expansion import _deterministic
+from app.core.embeddings import LocalHashEmbedder, embed_one, fit
 from app.core.enrich import enrich, extract_keywords, extractive_summary
+from app.core.evaluator import _LocalJudge
+from app.core.llm import LocalTemplateLLM
+from app.core.query_expansion import _deterministic
 
 
 def test_chunker_overlap():
@@ -40,6 +40,45 @@ def test_embed_and_fit():
     v = embed_one("penalty clause late delivery")
     v2 = fit(v)
     assert len(v2) == 384
+
+
+def test_embed_one_already_matches_configured_dim():
+    v = embed_one("penalty clause late delivery")
+    assert len(v) == 384
+
+
+def test_async_runner_without_running_loop():
+    from app.core.async_runner import runner
+
+    async def work():
+        await asyncio.sleep(0)
+        return "ok"
+
+    assert runner.run(work()) == "ok"
+
+
+def test_async_runner_inside_running_loop():
+    from app.core.async_runner import runner
+
+    async def work():
+        await asyncio.sleep(0)
+        return 42
+
+    async def outer():
+        return runner.run(work())
+
+    assert asyncio.run(outer()) == 42
+
+
+def test_gemini_provider_wiring(monkeypatch):
+    from app.config import settings
+    from app.core.embeddings import GeminiEmbedder, make_embedder
+    from app.core.llm import GeminiLLM, make_llm
+
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+
+    assert isinstance(make_llm("gemini"), GeminiLLM)
+    assert isinstance(make_embedder("gemini"), GeminiEmbedder)
 
 
 def test_local_llm_cited_answer():
@@ -76,6 +115,7 @@ def test_rerank_lexical_boosts():
 
 def test_extract_html_and_docx():
     import asyncio
+
     from app.core.chunker import extract_text
     html = b"<html><body><h1>Title</h1><p>Some body text here.</p></body></html>"
     text, mime = asyncio.run(extract_text("page.html", html))
@@ -90,8 +130,8 @@ def test_extract_unknown_binary_degrades():
 
 
 def test_chunker_tracks_pdf_pages():
-    text = PAGE_MARKER.join([f"First page paragraph about alpha. " * 6,
-                             f"Second page paragraph about beta. " * 6])
+    text = PAGE_MARKER.join(["First page paragraph about alpha. " * 6,
+                             "Second page paragraph about beta. " * 6])
     chunks = chunks_for_document("doc.pdf", text, "text")
     pages = {c["page"] for c in chunks}
     assert pages == {1, 2}

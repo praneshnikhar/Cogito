@@ -21,14 +21,17 @@ class Settings(BaseSettings):
     atlas_uri: str = ""
 
     # LLM / embeddings
-    llm_provider: str = "local"  # openrouter | openai | ollama | local
+    llm_provider: str = "local"  # openrouter | openai | ollama | gemini | local
     llm_model: str = "deepseek/deepseek-chat"
     openrouter_api_key: str = ""
     openai_api_key: str = ""
     ollama_base_url: str = "http://host.docker.internal:11434"
     ollama_llm_model: str = "qwen2.5:7b"
+    gemini_api_key: str = ""
+    gemini_llm_model: str = "gemini-3.5-flash"
+    gemini_embed_model: str = "gemini-embedding-001"
 
-    embedding_provider: str = "local"  # openrouter | openai | ollama | local
+    embedding_provider: str = "local"  # openrouter | openai | ollama | gemini | local
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 384
     ollama_embed_model: str = "nomic-embed-text"
@@ -59,6 +62,7 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 5
     search_num_candidates: int = 100
     evaluation_enabled: bool = True
+    evaluation_use_llm: bool = True
 
     # Webhooks
     cogito_webhook_url: str = "http://backend:8000/webhooks/ingest"

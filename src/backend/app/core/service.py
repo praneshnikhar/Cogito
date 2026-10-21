@@ -52,7 +52,18 @@ async def ask_from_chunks(
     """Generate a grounded, cited answer from pre-retrieved chunks, then log and
     evaluate it. Shared by the single-pass, agent, and multi-query paths."""
     start = time.time()
-    answer = generate_cited_answer(question, chunks)
+    try:
+        answer = generate_cited_answer(question, chunks)
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"answer generation failed: {e}")
+        answer = {
+            "answer": (
+                "The language model is temporarily rate-limited. Please retry "
+                "in a few seconds."
+            ),
+            "citations": [],
+            "error": "llm_unavailable",
+        }
     answer["chunks"] = chunks
     answer["query"] = question
     latency = int((time.time() - start) * 1000)

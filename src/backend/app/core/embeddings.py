@@ -1,7 +1,7 @@
 """Embedding provider factory.
 
-Pluggable backends: `openai`, `openrouter`, `ollama`, and `local` (a
-deterministic, key-free hashing embedder so the whole stack demos offline).
+Pluggable backends: `openai`, `openrouter`, `gemini`, `ollama`, and `local`
+(a deterministic, key-free hashing embedder so the whole stack demos offline).
 Every provider returns normalized vectors of `settings.embedding_dim` length.
 """
 
@@ -15,8 +15,12 @@ from typing import Protocol
 import numpy as np
 
 from app.config import settings
+from app.core.async_runner import runner
 
 log = logging.getLogger("cogito.embeddings")
+
+GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_RECOMMENDED_DIMS = (768, 1536, 3072)
 
 
 class Embedder(Protocol):
@@ -90,9 +94,7 @@ class OpenAIEmbedder:
         return [d.embedding for d in resp.data]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        import asyncio
-
-        return asyncio.run(self.embed_async(texts))
+        return runner.run(self.embed_async(texts))
 
 
 class OpenRouterEmbedder:
@@ -116,9 +118,31 @@ class OpenRouterEmbedder:
         return [d.embedding for d in resp.data]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        import asyncio
+        return runner.run(self.embed_async(texts))
 
-        return asyncio.run(self.embed_async(texts))
+
+class GeminiEmbedder:
+    """Google Gemini embeddings through its OpenAI-compatible endpoint."""
+
+    def __init__(self, model: str) -> None:
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(
+            api_key=settings.gemini_api_key,
+            base_url=GEMINI_OPENAI_BASE_URL,
+        )
+        self.model = model
+
+    @property
+    def dim(self) -> int:
+        return settings.embedding_dim
+
+    async def embed_async(self, texts: list[str]) -> list[list[float]]:
+        resp = await self._client.embeddings.create(model=self.model, input=texts)
+        return [d.embedding for d in resp.data]
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return runner.run(self.embed_async(texts))
 
 
 # ---------------------------------------------------------------- ollama
@@ -152,6 +176,16 @@ if settings.embedding_provider == "openai":
     _active: Embedder = OpenAIEmbedder(settings.embedding_model)
 elif settings.embedding_provider == "openrouter":
     _active = OpenRouterEmbedder(settings.embedding_model)
+elif settings.embedding_provider == "gemini":
+    _active = GeminiEmbedder(settings.gemini_embed_model)
+    if settings.embedding_dim not in GEMINI_RECOMMENDED_DIMS:
+        log.warning(
+            "EMBEDDING_DIM=%s is outside Gemini's recommended %s — vectors are "
+            "truncated and renormalized, but quality drops; set EMBEDDING_DIM=768 "
+            "and re-index documents to fix",
+            settings.embedding_dim,
+            "/".join(str(d) for d in GEMINI_RECOMMENDED_DIMS),
+        )
 elif settings.embedding_provider == "ollama":
     _active = OllamaEmbedder(settings.ollama_embed_model)
 else:
@@ -165,17 +199,19 @@ def make_embedder(provider: str | None = None) -> Embedder:
         return OpenAIEmbedder(settings.embedding_model)
     if p == "openrouter":
         return OpenRouterEmbedder(settings.embedding_model)
+    if p == "gemini":
+        return GeminiEmbedder(settings.gemini_embed_model)
     if p == "ollama":
         return OllamaEmbedder(settings.ollama_embed_model)
     return LocalHashEmbedder()
 
 
 def embed(texts: list[str]) -> list[list[float]]:
-    return _active.embed(texts)
+    return [fit(v) for v in _active.embed(texts)]
 
 
 def embed_one(text: str) -> list[float]:
-    return _active.embed([text])[0]
+    return fit(_active.embed([text])[0])
 
 
 def embedding_dim() -> int:

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+
+import { Nav } from "@/components/nav";
 import {
   BarChart,
   Bar,
@@ -61,11 +62,7 @@ export default function Dashboard() {
 
   return (
     <main className="wrap">
-      <nav className="nav">
-        <span className="brand">∎ Cogito</span>
-        <Link href="/">Home</Link>
-        <Link href="/chat">Chat</Link>
-      </nav>
+      <Nav />
       <div className="bread">Home / Analytics</div>
 
       {error && <div className="card hint">{error}</div>}

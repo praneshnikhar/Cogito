@@ -1,5 +1,8 @@
 # Cogito — Build Status
 
+> Internal development log, kept in the repo for reference. Not part of the
+> submission package; do not hand this file in.
+
 _Session log for standing the project up from `docs/PROPOSAL.md`.
 Last updated: 2026-10-14._
 

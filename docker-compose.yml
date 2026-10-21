@@ -26,7 +26,12 @@ services:
     ports:
       - "27018:27017"
     volumes:
-      - mongo_data:/data/db
+      # Persist /data (db + configdb + mongot). The runner stores a keyfile in
+      # /data/configdb, so mounting only /data/db breaks restarts.
+      - mongo_data:/data
+    # The atlas-local runner needs a one-time `init` before `server`; it is
+    # idempotent, so this is safe on every container start.
+    command: ["sh", "-c", "/usr/local/bin/runner init && exec /usr/local/bin/runner server"]
     healthcheck:
       test: [ "CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok" ]
       interval: 10s

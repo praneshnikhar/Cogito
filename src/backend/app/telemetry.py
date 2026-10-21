@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from typing import Any
 
 from app.config import settings
@@ -124,7 +125,20 @@ async def rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, i
     if r is None:
         return True, limit
     try:
-        return await r.sliding_window(key, limit, window_seconds)
+        if hasattr(r, "sliding_window"):
+            # Upstash REST client implements the command itself.
+            return await r.sliding_window(key, limit, window_seconds)
+        # Local redis.asyncio: sorted-set sliding window (one pipeline round trip).
+        now = time.time()
+        member = f"{now}-{time.time_ns()}"
+        pipe = r.pipeline()
+        pipe.zremrangebyscore(key, 0, now - window_seconds)
+        pipe.zadd(key, {member: now})
+        pipe.zcard(key)
+        pipe.expire(key, window_seconds)
+        results = await pipe.execute()
+        count = int(results[2])
+        return count <= limit, max(0, limit - count)
     except Exception:  # noqa: BLE001
         return True, limit
 

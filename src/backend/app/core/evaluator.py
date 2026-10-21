@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import re
 
+from app.config import settings
 from app.core import llm
 
 log = logging.getLogger("cogito.eval")
@@ -51,7 +52,7 @@ class _LocalJudge:
 
 
 def evaluate_answer(question: str, answer: str, context: list[dict]) -> dict:
-    judge = llm.active_judge()
+    judge = llm.active_judge() if settings.evaluation_use_llm else None
     if judge is None:
         return _LocalJudge().score(question, answer, context)
     try:

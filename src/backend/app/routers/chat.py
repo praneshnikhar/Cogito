@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from uuid import uuid4
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from app import db
 from app.core import memory as mem
@@ -16,16 +16,19 @@ from app.routers import SessionUuid, user_id
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = Field(default=None, max_length=64)
+    extract_memory: bool = True
 
 
 @router.post("")
-async def chat(body: dict, x_user_id: SessionUuid = None):
+async def chat(body: ChatRequest, x_user_id: SessionUuid = None):
     uid = user_id(x_user_id)
-    message = body.get("message", "")
-    conv_id = body.get("conversation_id")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+    conv_id = body.conversation_id
     if not conv_id:
         conv_id = str(uuid4())
         await db.col(db.CONVERSATIONS).insert_one(
@@ -38,7 +41,7 @@ async def chat(body: dict, x_user_id: SessionUuid = None):
     augmented = f"{message}\n\n[Your known facts]\n{recalled_text}" if recalled_text else message
 
     answer = await ask(augmented, user_id=uid)
-    memory_extract = body.get("extract_memory", True)
+    memory_extract = body.extract_memory
     if memory_extract and len(message) > 8:
         m = await _maybe_extract_fact(uid, message, answer.get("answer", ""))
         if m:

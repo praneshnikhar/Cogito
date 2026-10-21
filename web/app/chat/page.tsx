@@ -2,16 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
+
+import { Nav } from "@/components/nav";
 import { backend } from "@/lib/backend";
 
-type Msg = { role: "user" | "assistant"; content: string; citations?: any[]; answer_id?: string };
-
-const SUGGESTIONS = [
-  "What are our penalty clauses for late delivery?",
-  "How much annual leave do employees get?",
-  "What is our net-zero emissions target for 2030?",
-  "How long do we retain user data?",
-];
+type Msg = { role: "user" | "assistant"; content: string; citations?: any[] };
 
 export default function Chat() {
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -19,8 +14,8 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"basic" | "agent" | "multi">("basic");
 
-  const ask = async (q?: string) => {
-    const question = (q ?? input).trim();
+  const ask = async () => {
+    const question = input.trim();
     if (!question || loading) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", content: question }]);
@@ -35,7 +30,6 @@ export default function Chat() {
           role: "assistant",
           content: data.answer,
           citations: data.citations ?? [],
-          answer_id: data.answer_id,
         },
       ]);
     } catch (e: any) {
@@ -48,24 +42,11 @@ export default function Chat() {
     }
   };
 
-  const rate = async (ansId: string | undefined, rating: number) => {
-    if (!ansId) return;
-    try {
-      await backend("/feedback", {
-        method: "POST",
-        body: JSON.stringify({ answer_id: ansId, rating }),
-      });
-    } catch {}
-  };
-
   return (
     <main className="wrap">
-      <nav className="nav">
-        <span className="brand">∎ Cogito</span>
-        <Link href="/">Home</Link>
-        <Link href="/dashboard">Dashboard</Link>
-      </nav>
-      <div className="bread">Home / Chat ·{" "}
+      <Nav />
+      <div className="bread">
+        Home / Chat ·{" "}
         <select value={mode} onChange={(e) => setMode(e.target.value as any)}>
           <option value="basic">single-pass (Tier 1)</option>
           <option value="agent">agent loop (LangGraph)</option>
@@ -75,15 +56,13 @@ export default function Chat() {
 
       <div className="grid" style={{ gap: 10, minHeight: "52vh" }}>
         {messages.length === 0 && (
-          <div style={{ margin: "8px 0" }}>
-            <span className="klabel">Try one of these</span>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              {SUGGESTIONS.map((s) => (
-                <button key={s} className="btn secondary" onClick={() => ask(s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
+          <div className="card" style={{ margin: "8px 0" }}>
+            <h2 style={{ marginTop: 0 }}>Ask your documents</h2>
+            <p className="hint">
+              The knowledge base is empty. Add documents in{" "}
+              <Link href="/documents">Documents</Link>, then ask a question here.
+              Answers will cite the passages they use.
+            </p>
           </div>
         )}
         {messages.map((m, i) => (
@@ -96,12 +75,6 @@ export default function Chat() {
                 <div>{c.excerpt}</div>
               </div>
             ))}
-            {m.answer_id && (
-              <div className="row" style={{ marginTop: 8 }}>
-                <button className="btn secondary" onClick={() => rate(m.answer_id, 1)}>👍</button>
-                <button className="btn secondary" onClick={() => rate(m.answer_id, -1)}>👎</button>
-              </div>
-            )}
           </div>
         ))}
         {loading && <div className="hint">thinking…</div>}

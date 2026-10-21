@@ -10,9 +10,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import db
 from app.config import settings
+from app.errors import RateLimitExceeded
 from app.routers import analytics, chat, health, ingest, memory, search
 
 log = logging.getLogger("cogito")
@@ -50,6 +52,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(_request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please retry shortly."},
+        headers={"Retry-After": str(exc.retry_after)},
+    )
 
 app.include_router(health.router)
 app.include_router(ingest.router)

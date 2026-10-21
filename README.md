@@ -1,118 +1,80 @@
 # Cogito
 
-**An MCP-Powered RAG Knowledge Assistant.** A MongoDB-native, self-indexing
-Retrieval-Augmented Generation (RAG) system that any AI can query.
+Cogito is a MongoDB-backed knowledge assistant. Documents index themselves
+through a change stream, questions are answered with hybrid retrieval (keyword
+plus vector search, fused into one ranking), and every answer cites the
+passages it used. The same assistant is available through a REST API, a small
+web dashboard, and an MCP server, so AI clients such as Claude Desktop or
+Cursor can query the knowledge base as a tool.
 
-Drop a document in; a **change stream** chunks + embeds + indexes it
-automatically. Ask a question; **hybrid search** (lexical + semantic + fusion)
-returns a **grounded, cited answer** — exposed as a REST API, a web dashboard,
-and an **MCP server** so Claude Desktop / Cursor / any MCP client can use it.
-
----
-
-## What it does (end to end)
-
-```mermaid
-flowchart TD
-    A[Documents: PDF / text / URL] --> B[documents collection]
-    B -->|change stream| C[Ingestion worker]
-    C --> D[Chunker] --> E[Embeddings] --> F[chunks + vectors]
-    Q[User / AI client question] --> G[Hybrid search]
-    G --> H["$search + $vectorSearch + $rankFusion (or RRF fallback)"]
-    H --> K[Top-k chunks] --> L[LLM answer + citations]
-    L --> M[REST / Web / MCP]
-    T[Query logs] --> U[Analytics dashboard]
-    L -->|[LLM judge]| Eval[faithfulness + relevance tracking]
-    Eval --> Feedback --> boosts[retrieval re-ranking]
-```
-
-- **Auto-ingestion** — a single-node replica set's change stream indexes every
-  new/updated document with zero manual steps. Resume tokens make it crash-safe.
-- **Hybrid search** — keyword + semantic + fusion. When MongoDB Search
-  (`mongot`) is present it runs the native `$search` + `$vectorSearch` +
-  `$rankFusion` aggregation; otherwise it transparently falls back to `$text` +
-  brute-force cosine + Reciprocal Rank Fusion with the **same** result contract.
-- **Grounded answers** — the LLM must cite every claim to a retrieved chunk.
-  Each answer is scored by an LLM-judge for **faithfulness** and **relevance**.
-- **Agentic (LangGraph)** — a retrieve → assess-confidence → refine → answer
-  loop with long-term **memory** ("agent memory" pattern stored in Mongo).
-- **Feedback loop** — 👍/👎 ratings feed back into retrieval ranking.
-- **Multi-query retrieval** — query expansion + RRF fusion for higher recall.
-- **Document enrichment** — auto summary + keywords on every ingested document.
-- **MCP server** — `add_document`, `search_knowledge`, `ask_question`,
-  `list_sources`, `remember`, `recall` exposed to any MCP client.
-- **Observability & automations** — PostHog (analytics), Sentry (errors),
-  Upstash/Redis (rate-limit + cache), Pinecone (secondary vector store),
-  Supabase/Postgres (auth + analytics mirror), n8n (scheduled workflows),
-  Vercel (web deploy).
-
-## Architecture / services
-
-| Layer | Tech |
-|---|---|
-| Database | MongoDB 8.x single-node replica set (change streams) |
-| Backend | Python **FastAPI** + Motor (async) + LangGraph |
-| Search | `$search` / `$vectorSearch` / `$rankFusion` **or** `$text`+cosine+RRF |
-| Embeddings / LLM | OpenRouter / OpenAI / Ollama / **built-in local** (key-free) |
-| MCP | `mcp` Python SDK (fastmcp) |
-| Web | Next.js 15 (App Router) + Recharts → deploys to Vercel |
-| Infra | Docker Compose, Redis, Postgres, n8n |
-
-> **Runs fully offline with zero API keys.** The built-in *local* embedding +
-> LLM keep the whole pipeline demoable; drop your provider keys into `.env` and
-> the real models light up automatically.
-
-> **NoSQL course project?** Two docs explain the project end to end:
-> [`docs/PROJECT_REPORT.txt`](docs/PROJECT_REPORT.txt) — a plain-language report
-> on how MongoDB and AI process documents, and
-> [`docs/DATABASE.txt`](docs/DATABASE.txt) — a feature-by-feature map of every
-> MongoDB and AI feature to its code location.
+Two documents describe the project in detail:
+[`docs/PROJECT_REPORT.txt`](docs/PROJECT_REPORT.txt) is the course report, and
+[`docs/DATABASE.txt`](docs/DATABASE.txt) maps every MongoDB and AI feature to
+the code that implements it. [`docs/PROPOSAL.md`](docs/PROPOSAL.md) is the
+original plan.
 
 ## Quick start
 
-1. Start the core stack:
+1. Start the stack:
 
 ```bash
-cp .env.example .env      # defaults work; add keys to upgrade providers
+cp .env.example .env      # defaults work; keys are optional
 docker compose up -d --build
 ```
 
-This brings up MongoDB (replica set), the FastAPI backend (`:8000`), the
-change-stream ingestion worker, Redis, Postgres, and (opt-in) n8n. Mongo listens
-on `27018` to avoid clashing with any system `mongod` on `27017`.
+This starts MongoDB (single-node replica set with MongoDB Search, so `$search`,
+`$vectorSearch`, and `$rankFusion` run locally), the FastAPI backend on port
+8000, the change-stream ingestion worker, Redis, and Postgres. MongoDB is
+published on host port 27018 to avoid clashing with any system `mongod`.
 
-2. Seed the knowledge base with sample documents (change streams index them):
+2. Add your first document at `http://localhost:3000/documents` (upload a file
+   or paste text). The change stream indexes it automatically.
 
-```bash
-docker exec cogito-backend python -m app.scripts.seed
-```
-
-3. Talk to it.
+3. Ask a question:
 
 ```bash
-# cited answer
+# cited answer (hybrid retrieval + LLM)
 curl -s -XPOST localhost:8000/ask -H 'Content-Type: application/json' \
   -d '{"question":"What are our penalty clauses for late delivery?"}'
 
-# agentic loop
+# agentic loop (retrieve, check confidence, refine, answer)
 curl -s -XPOST localhost:8000/ask/agent -H 'Content-Type: application/json' \
   -d '{"question":"How much annual leave do employees get?"}'
-
-# dashboard
-open http://localhost:8000/docs          # OpenAPI
-cd web && npm install && npm run dev      # chat UI (localhost:3000)
 ```
 
-4. Enable more services when disk allows:
+4. Open the interfaces:
 
 ```bash
-docker compose --profile automation up -d   # adds n8n (webhooks :5678)
+open http://localhost:8000/docs      # OpenAPI
+cd web && npm install && npm run dev # documents at /documents, chat at /chat,
+                                     # dashboard at /dashboard
 ```
 
-## MCP — use Cogito from any AI client
+`/documents` is the place to upload or paste a document, watch it move from
+`pending` to `indexed`, edit its title or text, re-index it, delete it, and run
+a hybrid search over the indexed chunks. The same write routes are available
+directly on the API:
 
-Register Cogito in `~/.claude/...` / Claude Desktop / Cursor as a stdio MCP
-server:
+| Method and path | Purpose |
+|---|---|
+| `POST /ingest`, `POST /ingest/raw` | create a document from a file or raw text |
+| `GET /ingest/documents`, `GET /ingest/documents/{id}` | list or read a document |
+| `GET /ingest/documents/{id}/chunks` | read the indexed chunks |
+| `PATCH /ingest/documents/{id}` | update title, type, or text (re-indexes) |
+| `POST /ingest/documents/{id}/reindex` | queue the document for re-indexing |
+| `DELETE /ingest/documents/{id}` | delete the document and all of its chunks |
+| `PATCH/DELETE /memories/{id}` | update or delete a long-term memory |
+
+Write routes require the `X-Admin-Token` header. The web app injects it
+server-side through its `/api/documents` proxy (`COGITO_ADMIN_TOKEN` in
+`web/.env.local`, which must match `ADMIN_TOKEN` in the root `.env`).
+
+Optional: `docker compose --profile automation up -d` adds n8n on port 5678.
+
+## Using Cogito from an AI client (MCP)
+
+Register the MCP server over stdio in Claude Desktop, Cursor, or another MCP
+client:
 
 ```json
 {
@@ -125,62 +87,80 @@ server:
 }
 ```
 
-Then any MCP client can call `search_knowledge("...")`, `ask_question("...")`,
-`add_document("/path/to/file.pdf")`, and more.
+The server exposes seven tools: `list_sources`, `search_knowledge`,
+`search_multi`, `ask_question`, `add_document`, `remember`, and `recall`.
+
+## Configuration
+
+Everything runs offline by default. A key upgrades the corresponding part:
+
+| Variable | Effect |
+|---|---|
+| `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `OLLAMA_BASE_URL` | real LLM and embeddings (set `LLM_PROVIDER` / `EMBEDDING_PROVIDER`) |
+| `GEMINI_API_KEY` | Gemini LLM and embeddings (set `LLM_PROVIDER=gemini`, `EMBEDDING_PROVIDER=gemini`, `EMBEDDING_DIM=768`) |
+| `POSTHOG_API_KEY` | product analytics |
+| `SENTRY_DSN` | error tracking |
+| `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | managed rate limiting and cache |
+| `PINECONE_API_KEY` | secondary vector store for cross-store comparison |
+| `SUPABASE_URL` + `SUPABASE_ANON_KEY` | Supabase auth and analytics mirror (falls back to the bundled Postgres) |
+| `ATLAS_URI` | point MongoDB at Atlas instead of the bundled container |
+
+### Search modes
+
+The compose file uses the `mongodb-atlas-local:8.2` image, which bundles the
+database and MongoDB Search in one container, so the native pipeline
+(`$search` + `$vectorSearch` + `$rankFusion`) is the default. If `MONGODB_URI`
+points at a plain `mongod` or another deployment without MongoDB Search, the
+backend detects this at startup and switches to the `$text` + cosine + RRF
+fallback, which returns results in the same format. Check which path is active:
+
+```bash
+curl -s localhost:8000/capabilities
+```
+
+### Switching embedding provider or dimension
+
+Stored vectors and the vector index must match `EMBEDDING_DIM`. When changing
+the provider or the dimension (for example to Gemini at 768), drop the vector
+index, clear the chunk collection, mark documents as pending, and restart so
+the index is recreated and the worker re-embeds:
+
+```bash
+docker exec cogito-mongodb mongosh cogito --quiet --eval '
+  try { db.chunks.dropSearchIndex("cogito_vector") } catch (e) {}
+  db.chunks.deleteMany({});
+  db.documents.updateMany({}, { $set: { status: "pending" } })'
+docker compose up -d --build backend ingest-worker
+```
 
 ## Repository layout
 
 ```
 Cogito/
-├── docker-compose.yml          — isolated self-hosted stack
+├── docker-compose.yml           local stack: MongoDB + Search, backend, worker, Redis, Postgres
 ├── docker/
-│   ├── mongodb/init.js         — replica-set bootstrap
-│   └── postgres/schema.sql     — Supabase-compatible analytics mirror
+│   ├── mongodb/init.js          replica-set bootstrap
+│   └── postgres/schema.sql      analytics mirror schema
 ├── src/
 │   ├── backend/
-│   │   ├── app/
-│   │   │   ├── main.py         — FastAPI app
-│   │   │   ├── config.py        — settings (env-driven)
-│   │   │   ├── db.py           — Motor, feature detection, indexes
-│   │   │   ├── telemetry.py    — PostHog / Sentry / Upstash / logs
-│   │   │   ├── ingest_worker.py — change-stream watcher (+ backfill)
-│   │   │   ├── core/
-│   │   │   │   ├── embeddings.py  ├── llm.py     ├── chunker.py
-│   │   │   │   ├── hybrid_search.py ├── service.py ├── agent.py
-│   │   │   │   ├── evaluator.py ├── memory.py   ├── feedback.py
-│   │   │   ├── integrations/   — pinecone, supabase, upstash
-│   │   │   ├── routers/         — ingest, search, chat, memory, analytics, health
-│   │   │   └── scripts/         — ensure_indexes, seed
-│   │   └── tests/              — unit tests + MCP client smoke test
-│   └── mcp_cogito/server.py     — MCP tools wrapping the assistant
-├── web/                        — Next.js chat + analytics dashboard (Vercel-ready)
-├── infran8n/workflows/          — scheduled automation workflows
-├── docs/PROPOSAL.md             — full project proposal
-├── docs/PROJECT_REPORT.txt      — how the NoSQL DB + AI process documents (class report)
-├── docs/DATABASE.txt            — MongoDB + AI feature map, feature → code location
-└── .env.example
+│   │   ├── app/                 FastAPI app, ingestion worker, core modules
+│   │   │   ├── core/            retrieval, llm, agent, evaluator, memory, feedback
+│   │   │   ├── routers/         ingest, search, chat, memory, analytics, health
+│   │   │   └── scripts/         ensure_indexes, seed
+│   │   └── tests/               unit tests and the MCP smoke test
+│   └── mcp_cogito/server.py     MCP tools
+├── web/                         Next.js chat page and dashboard
+├── infran8n/workflows/          scheduled automation workflows
+└── docs/                        proposal, report, and the feature map
 ```
 
-## Environment / feature matrix
+## Tests and lint
 
-Set keys in `.env` to enable the corresponding feature (all are graceful no-ops
-otherwise):
+The same commands CI runs:
 
-| Variable | Feature |
-|---|---|
-| `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `OLLAMA_BASE_URL` | real LLM + embeddings |
-| `POSTHOG_API_KEY` | product analytics |
-| `SENTRY_DSN` | error tracking |
-| `UPSTASH_REDIS_REST_URL` + `_TOKEN` | managed rate-limit/cache |
-| `PINECONE_API_KEY` | secondary vector store + cross-store comparison |
-| `SUPABASE_URL` + `_ANON_KEY` | Supabase auth + analytics mirror (else Postgres) |
-| `ATLAS_URI` | point Mongo at Atlas for full `$search`/`$vectorSearch` |
-
-## Notes on MongoDB Search
-
-Cogito probes at startup for `mongot` (MongoDB Search). If present it runs the
-full `$search` + `$vectorSearch` + `$rankFusion` pipeline; if not (as in the
-default Community `mongod` docker image) it automatically uses the `$text` +
-cosine + RRF fallback, so the demo never breaks. Point `MONGODB_URI`/`ATLAS_URI`
-at an Atlas M10+ or a local deployment with Search enabled to get the flagship
-hybrid pipeline with no code changes.
+```bash
+cd src/backend
+pip install -e ".[dev]"      # or: uv sync
+pytest tests/ -q
+ruff check app
+```

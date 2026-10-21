@@ -9,10 +9,14 @@ node_modules/
 
 # Web (Next.js)
 web/.env*
+!web/.env.example
 web/.next/
 web/out/
 web/next-env.d.ts
 web/tsconfig.tsbuildinfo
+
+# Local browser-test artifacts
+.playwright-mcp/
 
 # Backend local overrides
 src/backend/.env

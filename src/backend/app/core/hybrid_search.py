@@ -21,6 +21,7 @@ import numpy as np
 from app import db
 from app.config import settings
 from app.core import embeddings
+from app.errors import RateLimitExceeded
 from app.telemetry import rate_limit
 
 log = logging.getLogger("cogito.retrieval")
@@ -182,6 +183,7 @@ async def hybrid_search(
     allowed, _ = await rate_limit(f"rl:search:{question[:16]}", 60, 60)
     if not allowed:
         log.warning("search rate limited")
+        raise RateLimitExceeded()
     chunks = await _retrieve_raw(question, k, full)
     chunks = await _apply_feedback_boosts(chunks)
     from app.core.reranker import rerank

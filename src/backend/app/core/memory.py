@@ -50,6 +50,35 @@ async def recall(user_id: str, query: str, limit: int = 3) -> list[dict]:
              "score": round(s, 3)} for s, m in out[:limit]]
 
 
+async def update_memory(
+    user_id: str,
+    memory_id: str,
+    fact: str | None = None,
+    importance: float | None = None,
+) -> dict | None:
+    """Update a fact (and re-embed it) or its importance."""
+    fields: dict = {"updated_at": time.time()}
+    if fact is not None:
+        fields["fact"] = fact
+        fields["embedding"] = embeddings.embed_one(fact)
+    if importance is not None:
+        fields["importance"] = float(importance)
+    result = await db.col(db.MEMORIES).update_one(
+        {"_id": memory_id, "user_id": user_id}, {"$set": fields}
+    )
+    if result.matched_count == 0:
+        return None
+    return await db.col(db.MEMORIES).find_one({"_id": memory_id})
+
+
+async def delete_memory(user_id: str, memory_id: str) -> bool:
+    """Delete a fact owned by this user."""
+    result = await db.col(db.MEMORIES).delete_one(
+        {"_id": memory_id, "user_id": user_id}
+    )
+    return result.deleted_count == 1
+
+
 async def list_memories(user_id: str | None = None) -> list[dict]:
     cur = db.col(db.MEMORIES).find({"user_id": user_id} if user_id else {}).sort("updated_at", -1)
     return [m async for m in cur]
